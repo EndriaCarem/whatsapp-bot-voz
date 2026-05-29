@@ -1,0 +1,17 @@
+# Dependências
+node_modules/
+
+# Configuração local (contém chaves secretas — nunca sobe pro GitHub)
+.env
+
+# Sessão do WhatsApp salva localmente
+auth/
+
+# QR code gerado pelo setup
+qrcode.png
+
+# Áudios de teste
+teste-saidas/
+
+# macOS
+.DS_Store

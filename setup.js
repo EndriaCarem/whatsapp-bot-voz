@@ -1,23 +1,24 @@
-// setup.js
-// ----------------------------------------------------------------------------
-// Configura a Evolution API de uma vez:
-//   1. Cria a instancia do WhatsApp (se nao existir).
-//   2. Aponta o webhook pra ele chamar nosso bot quando chegar mensagem.
-//   3. Mostra o QR code (link) pra voce escanear e conectar o WhatsApp.
-//
-// Rode:  npm run setup
-// (precisa do docker compose up -d e do bot rodando, ou pelo menos da Evolution)
-// ----------------------------------------------------------------------------
+/**
+ * setup.js — Configuração inicial do bot
+ * ----------------------------------------
+ * Esse script faz tudo que é necessário uma única vez antes de rodar o bot:
+ *  1. Cria a instância do WhatsApp na Evolution API
+ *  2. Configura o webhook para receber mensagens
+ *  3. Gera o QR code para você escanear com o celular
+ *
+ * Como rodar: npm run setup
+ */
 
 import "dotenv/config";
+import { writeFile } from "node:fs/promises";
 
-const EVOLUTION_URL = process.env.EVOLUTION_URL || "http://localhost:8080";
-const API_KEY = process.env.EVOLUTION_API_KEY;
-const INSTANCE = process.env.INSTANCE_NAME || "bot-voz";
-const PORT = process.env.PORT || 3000;
+const EVOLUTION_URL  = process.env.EVOLUTION_URL  || "http://localhost:8080";
+const API_KEY        = process.env.EVOLUTION_API_KEY;
+const INSTANCE       = process.env.INSTANCE_NAME  || "bot-voz";
+const PORT           = process.env.PORT            || 3000;
 
-// IMPORTANTE: a Evolution roda DENTRO do Docker. Pra ela achar o nosso bot
-// (que roda na maquina, fora do Docker), no Mac usamos host.docker.internal.
+// A Evolution roda dentro do Docker. Para ela alcançar o bot (que roda fora),
+// usamos host.docker.internal — endereço especial que o Docker Desktop cria no Mac.
 const WEBHOOK_URL = `http://host.docker.internal:${PORT}/webhook`;
 
 async function api(metodo, caminho, corpo) {
@@ -27,66 +28,83 @@ async function api(metodo, caminho, corpo) {
     body: corpo ? JSON.stringify(corpo) : undefined,
   });
   const texto = await resp.text();
-  let json; try { json = JSON.parse(texto); } catch { json = texto; }
+  let json;
+  try { json = JSON.parse(texto); } catch { json = texto; }
   return { ok: resp.ok, status: resp.status, json };
 }
 
 async function main() {
-  console.log(`🔧 Configurando instancia "${INSTANCE}" em ${EVOLUTION_URL}\n`);
+  console.log("─────────────────────────────────────────");
+  console.log("  🔧 Setup — WhatsApp Bot de Voz        ");
+  console.log("─────────────────────────────────────────");
+  console.log(`  Evolution : ${EVOLUTION_URL}`);
+  console.log(`  Instância : ${INSTANCE}`);
+  console.log(`  Webhook   : ${WEBHOOK_URL}`);
+  console.log("─────────────────────────────────────────\n");
 
-  // 1. Cria a instancia (ja com o webhook configurado).
-  console.log("→ Criando instancia...");
+  // ── Passo 1: Criar (ou confirmar) a instância ────────────────────────────
+  console.log("→ Criando instância...");
   const criar = await api("POST", "/instance/create", {
     instanceName: INSTANCE,
-    qrcode: true,
-    integration: "WHATSAPP-BAILEYS",
-    webhook: {
-      url: WEBHOOK_URL,
-      byEvents: false,
-      events: ["MESSAGES_UPSERT"],
-    },
+    qrcode:       true,
+    integration:  "WHATSAPP-BAILEYS",
   });
 
   if (criar.ok) {
-    console.log("  ✅ Instancia criada.");
+    console.log("  ✅ Instância criada com sucesso.\n");
   } else if (criar.status === 403 || JSON.stringify(criar.json).includes("already")) {
-    console.log("  ℹ️  Instancia ja existia, seguindo...");
-    // Garante o webhook mesmo se a instancia ja existia.
-    await api("POST", `/webhook/set/${INSTANCE}`, {
-      webhook: { enabled: true, url: WEBHOOK_URL, byEvents: false, events: ["MESSAGES_UPSERT"] },
-    });
+    console.log("  ℹ️  Instância já existe. Continuando...\n");
   } else {
-    console.error("  ❌ Erro ao criar instancia:", criar.status, criar.json);
+    console.error("  ❌ Erro ao criar instância:", criar.status, criar.json);
     process.exit(1);
   }
 
-  // 2. Pega o QR code pra conectar.
-  console.log("\n→ Gerando QR code...");
+  // ── Passo 2: Configurar o webhook ────────────────────────────────────────
+  console.log("→ Configurando webhook...");
+  await api("POST", `/webhook/set/${INSTANCE}`, {
+    webhook: {
+      enabled:      true,
+      url:          WEBHOOK_URL,
+      webhookBase64: true,
+      byEvents:     false,
+      events:       ["MESSAGES_UPSERT"],
+    },
+  });
+  console.log("  ✅ Webhook configurado.\n");
+
+  // ── Passo 3: Gerar QR code ────────────────────────────────────────────────
+  console.log("→ Gerando QR code...");
   const conectar = await api("GET", `/instance/connect/${INSTANCE}`);
 
-  const qrBase64 = conectar.json?.base64 || conectar.json?.qrcode?.base64;
+  const qrBase64    = conectar.json?.base64 || conectar.json?.qrcode?.base64;
   const pairingCode = conectar.json?.pairingCode || conectar.json?.qrcode?.pairingCode;
 
   if (pairingCode) {
-    console.log(`\n📱 CODIGO DE PAREAMENTO: ${pairingCode}`);
-    console.log("   No WhatsApp: Aparelhos conectados > Conectar > Conectar com numero de telefone\n");
+    console.log(`\n  📱 CÓDIGO DE PAREAMENTO: ${pairingCode}`);
+    console.log("  No WhatsApp: Aparelhos conectados → Conectar → Conectar com número\n");
   }
 
   if (qrBase64) {
-    // Salva o QR como imagem pra voce abrir e escanear.
-    const fs = await import("node:fs/promises");
-    const limpo = qrBase64.replace(/^data:image\/png;base64,/, "");
-    await fs.writeFile("qrcode.png", Buffer.from(limpo, "base64"));
-    console.log("📷 QR code salvo em qrcode.png — abra e escaneie no WhatsApp:");
-    console.log("   WhatsApp > Aparelhos conectados > Conectar aparelho\n");
+    const raw = qrBase64.replace(/^data:image\/\w+;base64,/, "");
+    await writeFile("qrcode.png", Buffer.from(raw, "base64"));
+    console.log("  📷 QR code salvo em qrcode.png");
+    console.log("  No celular: WhatsApp → Aparelhos conectados → Conectar aparelho\n");
   } else if (!pairingCode) {
-    console.log("ℹ️  Resposta:", JSON.stringify(conectar.json, null, 2));
-    console.log("   (Se ja estiver conectado, e isso mesmo.)");
+    // Na v2.1.1, o QR é entregue de forma assíncrona via evento.
+    // O painel web (manager) o exibe automaticamente.
+    console.log(`  🌐 Abra o painel no navegador para escanear o QR:`);
+    console.log(`     ${EVOLUTION_URL}/manager\n`);
+    console.log(`  API Key para logar no painel:`);
+    console.log(`     ${API_KEY}\n`);
   }
+
+  console.log("─────────────────────────────────────────");
+  console.log("  Setup concluído! Rode: npm start");
+  console.log("─────────────────────────────────────────");
 }
 
-main().catch((e) => {
-  console.error("Falhou:", e.message);
-  console.error("A Evolution esta rodando? (docker compose up -d)");
+main().catch((err) => {
+  console.error("\n❌ Setup falhou:", err.message);
+  console.error("   Verifique se a Evolution está rodando: docker compose up -d");
   process.exit(1);
 });

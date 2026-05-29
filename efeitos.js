@@ -1,119 +1,124 @@
-// efeitos.js
-// ----------------------------------------------------------------------------
-// Aqui ficam os "efeitos de voz". Cada efeito e so um conjunto de filtros do
-// FFmpeg aplicados no audio. Nao usa IA nenhuma: e manipulacao de pitch
-// (tom grave/agudo), velocidade, eco e filtros. E exatamente o tipo de coisa
-// que o Instagram faz por baixo dos panos nos efeitos classicos.
-//
-// O "asetrate" muda a frequencia de amostragem -> deixa a voz mais grave ou
-// aguda. O "atempo" corrige a velocidade pra voz nao ficar acelerada/lenta.
-// O "aecho" cria eco. O "afftdn"/filtros criam o ambiente (estadio, agua...).
-// ----------------------------------------------------------------------------
-
 import { spawn } from "node:child_process";
 import { writeFile, readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-// Taxa de amostragem base usada nos calculos de pitch.
+// Frequência de amostragem base. Todos os cálculos de pitch partem daqui.
 const BASE_RATE = 44100;
 
-// Cada efeito define a cadeia de filtros (-af) do FFmpeg.
-// A chave (ex: "demonio") e o comando que o usuario digita: !demonio
+/**
+ * Catálogo de efeitos de voz.
+ *
+ * Cada efeito é uma cadeia de filtros do FFmpeg (-af).
+ * Não usa IA — é pura manipulação de áudio:
+ *   • asetrate  → muda a freq. de amostragem (grave/agudo)
+ *   • atempo    → corrige a velocidade para não ficar lento/acelerado
+ *   • aecho     → cria eco/reverb
+ *   • vibrato   → oscilação rápida de pitch (textura robótica)
+ *
+ * Para adicionar um efeito novo, basta incluir uma entrada aqui.
+ * A chave (ex: "fantasma") vira automaticamente o comando !fantasma no bot.
+ */
 export const EFEITOS = {
   demonio: {
-    nome: "Demonio",
-    // Voz bem grave + um eco curto pra dar peso.
+    nome: "Demônio 😈",
+    descricao: "Voz grave e pesada com eco",
     filtro: `asetrate=${BASE_RATE}*0.7,aresample=${BASE_RATE},atempo=1.0/0.7,aecho=0.8:0.7:60:0.5`,
   },
   esquilo: {
-    nome: "Esquilo",
-    // Voz bem aguda (tipo helio / chipmunk).
+    nome: "Esquilo 🐿️",
+    descricao: "Voz bem aguda, estilo chipmunk",
     filtro: `asetrate=${BASE_RATE}*1.5,aresample=${BASE_RATE},atempo=1.0/1.5`,
   },
   robo: {
-    nome: "Robo",
-    // Vibrato rapido + leve pitch dá uma textura metalica/robotica.
+    nome: "Robô 🤖",
+    descricao: "Textura metálica com vibrato",
     filtro: `asetrate=${BASE_RATE}*0.9,aresample=${BASE_RATE},atempo=1.0/0.9,vibrato=f=8:d=0.6,aecho=0.6:0.5:20:0.4`,
   },
   estadio: {
-    nome: "Estadio",
-    // Reverb grande, como se estivesse num lugar enorme.
+    nome: "Estádio 🏟️",
+    descricao: "Reverb enorme, como em uma arena",
     filtro: `aecho=0.8:0.9:1000|1800:0.3|0.25`,
   },
   agudo: {
-    nome: "Agudo",
+    nome: "Agudo 🎵",
+    descricao: "Voz levemente mais aguda",
     filtro: `asetrate=${BASE_RATE}*1.25,aresample=${BASE_RATE},atempo=1.0/1.25`,
   },
   grave: {
-    nome: "Grave",
+    nome: "Grave 🔊",
+    descricao: "Voz levemente mais grave",
     filtro: `asetrate=${BASE_RATE}*0.8,aresample=${BASE_RATE},atempo=1.0/0.8`,
   },
 };
 
-// Roda o FFmpeg como um processo separado e espera ele terminar.
+// Executa o FFmpeg e aguarda a conclusão.
 function rodarFFmpeg(args) {
   return new Promise((resolve, reject) => {
     const proc = spawn("ffmpeg", args);
     let stderr = "";
-    proc.stderr.on("data", (d) => (stderr += d.toString()));
-    proc.on("error", reject); // ex: ffmpeg nao instalado
+    proc.stderr.on("data", (chunk) => (stderr += chunk.toString()));
+    proc.on("error", reject);
     proc.on("close", (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`FFmpeg saiu com codigo ${code}:\n${stderr}`));
+      else reject(new Error(`FFmpeg encerrou com código ${code}:\n${stderr}`));
     });
   });
 }
 
 /**
- * Recebe o audio original (Buffer), aplica o efeito e devolve o novo audio.
- * @param {Buffer} bufferEntrada - bytes do audio recebido no WhatsApp
- * @param {string} chaveEfeito  - "demonio", "esquilo", etc.
- * @returns {Promise<Buffer>} bytes do audio modificado (formato .ogg/opus)
+ * Aplica um efeito de voz em um buffer de áudio.
+ *
+ * @param {Buffer} bufferEntrada  Bytes do áudio original (qualquer formato que o FFmpeg leia)
+ * @param {string} chaveEfeito    Chave do efeito, ex: "demonio", "robo"
+ * @returns {Promise<Buffer>}     Áudio modificado em OGG/Opus (formato do WhatsApp PTT)
  */
 export async function aplicarEfeito(bufferEntrada, chaveEfeito) {
   const efeito = EFEITOS[chaveEfeito];
-  if (!efeito) throw new Error(`Efeito desconhecido: ${chaveEfeito}`);
+  if (!efeito) throw new Error(`Efeito desconhecido: "${chaveEfeito}"`);
 
-  // Arquivos temporarios (FFmpeg le/escreve em disco).
+  // FFmpeg lê e escreve em disco — usamos arquivos temporários únicos.
   const id = randomUUID();
-  const entrada = join(tmpdir(), `in-${id}`);
-  const saida = join(tmpdir(), `out-${id}.ogg`);
+  const caminhoEntrada = join(tmpdir(), `voz-in-${id}`);
+  const caminhoSaida   = join(tmpdir(), `voz-out-${id}.ogg`);
 
   try {
-    await writeFile(entrada, bufferEntrada);
+    await writeFile(caminhoEntrada, bufferEntrada);
 
-    // -i entrada : arquivo de entrada
-    // -af <filtro>: a cadeia de filtros do efeito
-    // -c:a libopus -b:a 64k : exporta como opus, que e o codec de audio do
-    //   WhatsApp (PTT/voice note). Isso garante que reproduza como mensagem
-    //   de voz no app.
     await rodarFFmpeg([
-      "-y",
-      "-i", entrada,
-      "-af", efeito.filtro,
-      "-c:a", "libopus",
-      "-b:a", "64k",
-      saida,
+      "-y",                       // sobrescreve saída sem perguntar
+      "-i", caminhoEntrada,       // arquivo de entrada
+      "-af", efeito.filtro,       // cadeia de filtros do efeito
+      "-c:a", "libopus",          // codec Opus (padrão do WhatsApp PTT)
+      "-b:a", "64k",              // bitrate adequado para voz
+      caminhoSaida,
     ]);
 
-    return await readFile(saida);
+    return await readFile(caminhoSaida);
   } finally {
-    // Limpa os temporarios mesmo se der erro.
-    await unlink(entrada).catch(() => {});
-    await unlink(saida).catch(() => {});
+    // Sempre limpa os temporários, mesmo se ocorrer erro.
+    await unlink(caminhoEntrada).catch(() => {});
+    await unlink(caminhoSaida).catch(() => {});
   }
 }
 
-// Monta o texto do "menu" que o bot manda quando alguem pede ajuda.
+/**
+ * Gera o texto do menu exibido quando alguém envia !menu.
+ */
 export function textoMenu() {
-  const nomes = Object.values(EFEITOS).map((e) => e.nome).join(", ");
+  const linhaEfeitos = Object.entries(EFEITOS)
+    .map(([, e]) => `  • ${e.nome} — ${e.descricao}`)
+    .join("\n");
+
   return (
     "🎙️ *Bot de Efeitos de Voz*\n\n" +
-    "1️⃣ Responda a uma *mensagem de audio* escrevendo *!voz*\n" +
-    "2️⃣ Toque no efeito que aparecer nos botoes\n" +
-    "3️⃣ O bot devolve o audio ja modificado 🎉\n\n" +
-    `Efeitos: ${nomes}`
+    "*Como usar:*\n" +
+    "1️⃣ Grave ou abra uma mensagem de áudio no grupo\n" +
+    "2️⃣ Responda esse áudio escrevendo *!voz*\n" +
+    "3️⃣ Escolha o efeito nos botões que aparecerem\n" +
+    "4️⃣ O bot devolve o áudio já modificado 🎉\n\n" +
+    "*Efeitos disponíveis:*\n" +
+    linhaEfeitos
   );
 }

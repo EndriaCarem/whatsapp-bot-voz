@@ -1,0 +1,65 @@
+# docker-compose.yml
+# Stack ISOLADA, so pra este bot de voz. Nao colide com as suas outras
+# Evolutions (nomes e portas diferentes).
+#
+# Subir:   docker compose up -d
+# Parar:   docker compose down
+# Logs:    docker compose logs -f voz-evolution
+
+services:
+  voz-evolution:
+    image: atendai/evolution-api:v2.1.1
+    container_name: voz-evolution
+    restart: always
+    ports:
+      - "8082:8080" # REST/painel em http://localhost:8082
+    environment:
+      AUTHENTICATION_API_KEY: chave-do-bot-de-voz-troque-se-quiser
+      SERVER_URL: http://localhost:8082
+
+      # Banco
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      # IMPORTANTE: usa o NOME do servico (voz-postgres), nao localhost.
+      DATABASE_CONNECTION_URI: postgresql://evolution:evolution@voz-postgres:5432/evolution
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
+      DATABASE_SAVE_MESSAGE_UPDATE: "true"
+
+      # Cache: usa o NOME do servico (voz-redis), nao localhost.
+      # (Era exatamente esse o bug da sua outra Evolution.)
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://voz-redis:6379/0
+      CACHE_REDIS_PREFIX_KEY: evolution
+      CACHE_LOCAL_ENABLED: "false"
+
+      # Garante que o evento de mensagem nova seja enviado no webhook.
+      WEBHOOK_EVENTS_MESSAGES_UPSERT: "true"
+    depends_on:
+      - voz-postgres
+      - voz-redis
+    volumes:
+      - voz_instances:/evolution/instances
+
+  voz-postgres:
+    image: postgres:15
+    container_name: voz-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: evolution
+      POSTGRES_DB: evolution
+    volumes:
+      - voz_postgres_data:/var/lib/postgresql/data
+
+  voz-redis:
+    image: redis:7
+    container_name: voz-redis
+    restart: always
+    volumes:
+      - voz_redis_data:/data
+
+volumes:
+  voz_instances:
+  voz_postgres_data:
+  voz_redis_data:

@@ -1,30 +1,36 @@
-// index.js
-// ----------------------------------------------------------------------------
-// Bot de efeitos de voz usando a EVOLUTION API.
-//
-// Fluxo:
-//   1. A Evolution API (Docker) conecta no WhatsApp.
-//   2. Quando chega uma mensagem, a Evolution chama nosso WEBHOOK (POST /webhook).
-//   3. Se for um comando "!efeito" respondendo um audio, baixamos o audio,
-//      aplicamos o efeito (FFmpeg) e mandamos de volta pela REST da Evolution.
-//
-// ⚠️ Conexao nao-oficial (Evolution usa Baileys por baixo). Use chip de teste.
-// ----------------------------------------------------------------------------
+/**
+ * Bot de Efeitos de Voz para WhatsApp
+ * ------------------------------------
+ * Criado por: Endria / EndriaCarem
+ * Repositório: github.com/EndriaCarem/whatsapp-bot-voz
+ *
+ * Como funciona:
+ *  1. A Evolution API (rodando via Docker) mantém a conexão com o WhatsApp.
+ *  2. Quando chega uma mensagem no grupo, a Evolution dispara um POST
+ *     para o nosso webhook (/webhook) com os dados da mensagem.
+ *  3. Se a mensagem for o comando !voz respondendo um áudio, o bot:
+ *       a. Exibe botões de efeito (Demônio, Esquilo, Robô...)
+ *       b. Quando a pessoa clica num botão, baixa o áudio original
+ *       c. Aplica o efeito via FFmpeg
+ *       d. Reenvia o áudio modificado no grupo
+ *
+ * ⚠️  A Evolution API usa Baileys (conexão não-oficial).
+ *     Use sempre um número de teste — nunca o seu principal.
+ */
 
 import "dotenv/config";
 import express from "express";
 import { aplicarEfeito, EFEITOS, textoMenu } from "./efeitos.js";
 
+// ─── Configuração ────────────────────────────────────────────────────────────
+
 const EVOLUTION_URL = process.env.EVOLUTION_URL || "http://localhost:8080";
-const API_KEY = process.env.EVOLUTION_API_KEY;
-const INSTANCE = process.env.INSTANCE_NAME || "bot-voz";
-const PORT = process.env.PORT || 3000;
+const API_KEY       = process.env.EVOLUTION_API_KEY;
+const INSTANCE      = process.env.INSTANCE_NAME   || "bot-voz";
+const PORT          = process.env.PORT             || 3000;
 
-// ---------------------------------------------------------------------------
-// Helpers pra falar com a Evolution API (REST).
-// ---------------------------------------------------------------------------
+// ─── Comunicação com a Evolution API ─────────────────────────────────────────
 
-// Chamada generica autenticada na Evolution.
 async function evolution(metodo, caminho, corpo) {
   const resp = await fetch(`${EVOLUTION_URL}${caminho}`, {
     method: metodo,
@@ -34,14 +40,14 @@ async function evolution(metodo, caminho, corpo) {
     },
     body: corpo ? JSON.stringify(corpo) : undefined,
   });
+
   const texto = await resp.text();
   if (!resp.ok) {
-    throw new Error(`Evolution ${metodo} ${caminho} -> ${resp.status}: ${texto}`);
+    throw new Error(`Evolution ${metodo} ${caminho} → ${resp.status}: ${texto}`);
   }
   try { return JSON.parse(texto); } catch { return texto; }
 }
 
-// Manda um texto pra um chat (grupo ou contato).
 function enviarTexto(numero, texto) {
   return evolution("POST", `/message/sendText/${INSTANCE}`, {
     number: numero,
@@ -49,7 +55,6 @@ function enviarTexto(numero, texto) {
   });
 }
 
-// Manda um audio (como mensagem de voz / PTT). A Evolution aceita base64.
 function enviarAudio(numero, bufferOgg) {
   return evolution("POST", `/message/sendWhatsAppAudio/${INSTANCE}`, {
     number: numero,
@@ -57,14 +62,14 @@ function enviarAudio(numero, bufferOgg) {
   });
 }
 
-// Manda a lista de efeitos como BOTOES clicaveis. Cada botao tem um "id" que
-// volta pra gente quando a pessoa clica (ai sabemos qual efeito aplicar).
-// O "audioId" e o id da mensagem de audio original — vai embutido no id do
-// botao pra sabermos QUAL audio modificar.
+/**
+ * Envia os botões de seleção de efeito.
+ * O ID de cada botão carrega qual áudio modificar: "efeito|chave|audioId|autor"
+ * Isso evita precisar de banco de dados para guardar o estado.
+ */
 function enviarBotoes(numero, audioId, autorAudio) {
   const botoes = Object.entries(EFEITOS).map(([chave, e]) => ({
     type: "reply",
-    // formato do id: efeito|chave|idDoAudio|autorDoAudio
     displayText: e.nome,
     id: `efeito|${chave}|${audioId}|${autorAudio || ""}`,
   }));
@@ -72,13 +77,12 @@ function enviarBotoes(numero, audioId, autorAudio) {
   return evolution("POST", `/message/sendButtons/${INSTANCE}`, {
     number: numero,
     title: "🎙️ Efeitos de voz",
-    description: "Toque num efeito pra ouvir o audio modificado:",
-    footer: "Bot de voz",
+    description: "Toque em um efeito para transformar o áudio:",
+    footer: "Bot de Voz • EndriaCarem",
     buttons: botoes,
   });
 }
 
-// Baixa a midia de uma mensagem (a Evolution devolve o conteudo em base64).
 async function baixarMidia(messageKey) {
   const r = await evolution("POST", `/chat/getBase64FromMediaMessage/${INSTANCE}`, {
     message: { key: messageKey },
@@ -88,112 +92,122 @@ async function baixarMidia(messageKey) {
   return Buffer.from(base64, "base64");
 }
 
-// ---------------------------------------------------------------------------
-// Servidor que recebe os webhooks da Evolution.
-// ---------------------------------------------------------------------------
+// ─── Servidor de Webhook ──────────────────────────────────────────────────────
 
 const app = express();
-app.use(express.json({ limit: "50mb" })); // audios podem ser grandes
+app.use(express.json({ limit: "50mb" }));
 
-app.get("/", (_req, res) => res.send("Bot de voz rodando ✅"));
+// Rota de health check — Railway e outros serviços usam isso pra saber se o bot está vivo.
+app.get("/", (_req, res) => {
+  res.json({ status: "online", bot: "whatsapp-bot-voz", autor: "EndriaCarem" });
+});
 
 app.post("/webhook", async (req, res) => {
-  res.sendStatus(200); // responde rapido; processa depois
-  // LOG DE DIAGNOSTICO: mostra todo evento que chega.
-  console.log(`📥 webhook: event=${req.body?.event}`);
+  // Responde 200 imediatamente — a Evolution não espera processamento.
+  res.sendStatus(200);
+  console.log(`📥 evento recebido: ${req.body?.event}`);
   try {
     await tratarEvento(req.body);
   } catch (err) {
-    console.error("Erro no webhook:", err.message);
+    console.error("❌ Erro no webhook:", err.message);
   }
 });
 
+// ─── Lógica principal ─────────────────────────────────────────────────────────
+
 async function tratarEvento(evento) {
-  // So nos interessa o evento de mensagem nova.
   if (evento?.event !== "messages.upsert") return;
 
   const dados = evento.data;
-  const msg = Array.isArray(dados) ? dados[0] : dados;
+  const msg   = Array.isArray(dados) ? dados[0] : dados;
+
+  // Ignora mensagens enviadas pelo próprio bot e mensagens sem conteúdo.
   if (!msg?.message || msg.key?.fromMe) return;
 
-  const chatId = msg.key.remoteJid; // grupo ou contato
+  const chatId = msg.key.remoteJid;
 
-  // ---- CASO 1: a pessoa CLICOU num botao de efeito ----------------------
+  // ── Caso 1: clique em botão de efeito ─────────────────────────────────────
   const clique =
     msg.message.buttonsResponseMessage?.selectedButtonId ||
     msg.message.templateButtonReplyMessage?.selectedId;
+
   if (clique?.startsWith("efeito|")) {
     await aplicarPorClique(chatId, clique);
     return;
   }
 
-  // ---- CASO 2: comando de texto -----------------------------------------
+  // ── Caso 2: comando de texto ───────────────────────────────────────────────
   const texto = (
     msg.message.conversation ||
     msg.message.extendedTextMessage?.text ||
     ""
   ).trim().toLowerCase();
 
-  // Menu / ajuda.
+  if (!texto.startsWith("!")) return;
+
+  // !menu / !ajuda → exibe instruções
   if (["!menu", "!ajuda", "!help"].includes(texto)) {
     await enviarTexto(chatId, textoMenu());
     return;
   }
 
-  // !voz (ou !efeito) respondendo um audio -> mostra os BOTOES.
+  // !voz / !efeito → exibe botões para escolher o efeito
   if (["!voz", "!efeito", "!efeitos"].includes(texto)) {
     const contexto = msg.message.extendedTextMessage?.contextInfo;
-    const citada = contexto?.quotedMessage;
-    if (!citada?.audioMessage) {
-      await enviarTexto(chatId, "❗ Responda a uma *mensagem de audio* com *!voz*.");
+    if (!contexto?.quotedMessage?.audioMessage) {
+      await enviarTexto(chatId, "❗ Responda a uma *mensagem de áudio* com *!voz* para usar os efeitos.");
       return;
     }
-    // Mostra os botoes, carregando no id qual audio modificar.
     await enviarBotoes(chatId, contexto.stanzaId, contexto.participant);
     return;
   }
 
-  // Atalho: ainda aceita !demonio, !robo etc. direto, se a pessoa preferir.
-  if (texto.startsWith("!") && EFEITOS[texto.slice(1)]) {
+  // !demonio / !robo / etc. → atalho direto (para quem preferir digitar)
+  const chaveAtalho = texto.slice(1);
+  if (EFEITOS[chaveAtalho]) {
     const contexto = msg.message.extendedTextMessage?.contextInfo;
-    const citada = contexto?.quotedMessage;
-    if (!citada?.audioMessage) {
-      await enviarTexto(chatId, "❗ Responda a uma *mensagem de audio* com o comando.");
+    if (!contexto?.quotedMessage?.audioMessage) {
+      await enviarTexto(chatId, "❗ Responda a uma *mensagem de áudio* com o comando.");
       return;
     }
-    await processarAudio(chatId, texto.slice(1), contexto.stanzaId, contexto.participant);
+    await processarAudio(chatId, chaveAtalho, contexto.stanzaId, contexto.participant);
   }
 }
 
-// Quando a pessoa clica num botao: o id traz "efeito|chave|idDoAudio|autor".
 async function aplicarPorClique(chatId, selectedId) {
   const [, chave, audioId, autor] = selectedId.split("|");
   if (!EFEITOS[chave]) return;
   await processarAudio(chatId, chave, audioId, autor);
 }
 
-// Baixa o audio original, aplica o efeito e reenvia so o modificado.
 async function processarAudio(chatId, chave, audioId, autor) {
-  const keyCitada = {
-    remoteJid: chatId,
-    id: audioId,
+  const key = {
+    remoteJid:   chatId,
+    id:          audioId,
     participant: autor || undefined,
-    fromMe: false,
+    fromMe:      false,
   };
 
   try {
-    const bufferEntrada = await baixarMidia(keyCitada);
-    const bufferSaida = await aplicarEfeito(bufferEntrada, chave);
-    await enviarAudio(chatId, bufferSaida);
-    console.log(`🎙️  Efeito "${chave}" aplicado em ${chatId}`);
+    console.log(`🎙️  Aplicando efeito "${chave}" no chat ${chatId}...`);
+    const entrada = await baixarMidia(key);
+    const saida   = await aplicarEfeito(entrada, chave);
+    await enviarAudio(chatId, saida);
+    console.log(`✅ Efeito "${chave}" enviado com sucesso.`);
   } catch (err) {
-    console.error(`Falha ao aplicar "${chave}":`, err.message);
-    await enviarTexto(chatId, "❌ Nao consegui processar esse audio, tenta de novo.");
+    console.error(`❌ Falha ao aplicar "${chave}":`, err.message);
+    await enviarTexto(chatId, "❌ Não consegui processar esse áudio. Tenta de novo!");
   }
 }
 
+// ─── Inicialização ────────────────────────────────────────────────────────────
+
 app.listen(PORT, () => {
-  console.log(`✅ Bot ouvindo webhooks em http://localhost:${PORT}/webhook`);
-  console.log(`   Evolution API esperada em ${EVOLUTION_URL}`);
-  console.log(`   Rode "npm run setup" se ainda nao conectou o WhatsApp.`);
+  console.log("─────────────────────────────────────────");
+  console.log("  🎙️  WhatsApp Bot de Voz — EndriaCarem  ");
+  console.log("─────────────────────────────────────────");
+  console.log(`  Webhook : http://localhost:${PORT}/webhook`);
+  console.log(`  Evolution: ${EVOLUTION_URL}`);
+  console.log(`  Instância: ${INSTANCE}`);
+  console.log("─────────────────────────────────────────");
 });
