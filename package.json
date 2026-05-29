@@ -1,0 +1,16 @@
+{
+  "name": "whatsapp-voice-bot",
+  "version": "2.0.0",
+  "description": "Bot de WhatsApp (via Evolution API) que aplica efeitos de voz em audios",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "setup": "node setup.js",
+    "teste": "node teste-efeitos.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2"
+  }
+}
