@@ -124,6 +124,15 @@ O Baileys é uma conexão **não-oficial** com o WhatsApp e viola os Termos de U
 
 ---
 
+## 📄 Licença
+
+Distribuído sob a **Licença Apache 2.0**. Você pode usar, modificar e distribuir,
+desde que mantenha os créditos de autoria. Veja o arquivo [LICENSE](LICENSE) para os termos completos.
+
+© 2026 EndriaCarem. Todos os direitos reservados sobre a autoria original.
+
+---
+
 <div align="center">
   Feito por <a href="https://github.com/EndriaCarem">EndriaCarem</a>
 </div>
