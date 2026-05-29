@@ -7,6 +7,10 @@ node_modules/
 # Sessão do WhatsApp salva localmente
 auth/
 
+# Banco de dados de runtime (XP, enquetes, logs do grupo)
+grupo.db
+grupo.db-*
+
 # QR code gerado pelo setup
 qrcode.png
 

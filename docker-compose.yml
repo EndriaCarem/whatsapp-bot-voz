@@ -8,7 +8,7 @@
 
 services:
   voz-evolution:
-    image: atendai/evolution-api:v2.1.1
+    image: atendai/evolution-api:latest
     container_name: voz-evolution
     restart: always
     ports:
