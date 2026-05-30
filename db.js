@@ -4,14 +4,20 @@ const db = new Database("grupo.db");
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS usuarios (
-    jid       TEXT PRIMARY KEY,
-    nome      TEXT NOT NULL DEFAULT 'Anônimo',
-    xp        INTEGER NOT NULL DEFAULT 0,
-    nivel     INTEGER NOT NULL DEFAULT 1,
-    moedas    INTEGER NOT NULL DEFAULT 0,
-    msgs      INTEGER NOT NULL DEFAULT 0,
-    audios    INTEGER NOT NULL DEFAULT 0,
-    ultima_msg INTEGER NOT NULL DEFAULT 0
+    chat_id    TEXT NOT NULL DEFAULT 'global',
+    jid        TEXT NOT NULL,
+    nome       TEXT NOT NULL DEFAULT 'Anônimo',
+    xp         INTEGER NOT NULL DEFAULT 0,
+    nivel      INTEGER NOT NULL DEFAULT 1,
+    moedas     INTEGER NOT NULL DEFAULT 0,
+    msgs       INTEGER NOT NULL DEFAULT 0,
+    audios     INTEGER NOT NULL DEFAULT 0,
+    ultima_msg INTEGER NOT NULL DEFAULT 0,
+    entrou_em  INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    cargo_custom TEXT,
+    area_ti    TEXT,
+    signo      TEXT,
+    PRIMARY KEY (chat_id, jid)
   );
 
   CREATE TABLE IF NOT EXISTS conquistas (
@@ -58,51 +64,121 @@ db.exec(`
   );
 `);
 
+// Migrações para bancos já existentes (CREATE TABLE IF NOT EXISTS não altera colunas).
+function adicionarColuna(tabela, coluna, tipo) {
+  const cols = db.prepare(`PRAGMA table_info(${tabela})`).all();
+  if (!cols.some(c => c.name === coluna)) {
+    db.exec(`ALTER TABLE ${tabela} ADD COLUMN ${coluna} ${tipo}`);
+  }
+}
+adicionarColuna("usuarios", "signo", "TEXT");
+
 // ── Usuários ──────────────────────────────────────────────────────────────────
 
-export function getUsuario(jid) {
-  return db.prepare("SELECT * FROM usuarios WHERE jid = ?").get(jid);
+export function getUsuario(chatId, jid) {
+  return db.prepare("SELECT * FROM usuarios WHERE chat_id=? AND jid=?").get(chatId, jid);
 }
 
-export function upsertUsuario(jid, nome) {
+export function upsertUsuario(chatId, jid, nome) {
   db.prepare(`
-    INSERT INTO usuarios (jid, nome) VALUES (?, ?)
-    ON CONFLICT(jid) DO UPDATE SET nome = excluded.nome
-  `).run(jid, nome || "Anônimo");
+    INSERT INTO usuarios (chat_id, jid, nome) VALUES (?,?,?)
+    ON CONFLICT(chat_id, jid) DO UPDATE SET nome = excluded.nome
+  `).run(chatId, jid, nome || "Anônimo");
 }
 
 // ── XP e níveis ───────────────────────────────────────────────────────────────
 
 const XP_POR_NIVEL = (n) => 100 * n * n;
 
-export function addXP(jid, nome, qtd) {
-  upsertUsuario(jid, nome);
-  const u = getUsuario(jid);
+// XP total acumulado = soma do XP necessário pra chegar no nível atual + XP residual.
+// Usado no ranking pra refletir o esforço real (o campo `xp` guarda só o residual).
+export function xpTotal(nivel, xpResidual) {
+  let total = xpResidual;
+  for (let n = 2; n <= nivel; n++) total += XP_POR_NIVEL(n);
+  return total;
+}
+
+export function addXP(chatId, jid, nome, qtd) {
+  upsertUsuario(chatId, jid, nome);
+  const u = getUsuario(chatId, jid);
   let xpNovo = u.xp + qtd;
   let nivel = u.nivel;
   while (xpNovo >= XP_POR_NIVEL(nivel + 1)) {
     xpNovo -= XP_POR_NIVEL(nivel + 1);
     nivel++;
   }
-  db.prepare("UPDATE usuarios SET xp=?, nivel=?, msgs=msgs+1, ultima_msg=? WHERE jid=?")
-    .run(xpNovo, nivel, Date.now(), jid);
+  db.prepare("UPDATE usuarios SET xp=?, nivel=?, msgs=msgs+1, ultima_msg=? WHERE chat_id=? AND jid=?")
+    .run(xpNovo, nivel, Date.now(), chatId, jid);
   return { subiuNivel: nivel > u.nivel, nivelNovo: nivel };
 }
 
-export function addAudio(jid, nome) {
-  upsertUsuario(jid, nome);
-  db.prepare("UPDATE usuarios SET audios=audios+1 WHERE jid=?").run(jid);
+export function addAudio(chatId, jid, nome) {
+  upsertUsuario(chatId, jid, nome);
+  db.prepare("UPDATE usuarios SET audios=audios+1 WHERE chat_id=? AND jid=?").run(chatId, jid);
 }
 
-export function addMoedas(jid, qtd) {
-  db.prepare("UPDATE usuarios SET moedas=moedas+? WHERE jid=?").run(qtd, jid);
+export function addMoedas(chatId, jid, qtd) {
+  db.prepare("UPDATE usuarios SET moedas=moedas+? WHERE chat_id=? AND jid=?").run(qtd, chatId, jid);
 }
 
-export function getRanking(limit = 10) {
-  return db.prepare(`
-    SELECT nome, nivel, xp, moedas, msgs
-    FROM usuarios ORDER BY nivel DESC, xp DESC LIMIT ?
-  `).all(limit);
+export function getMoedas(chatId, jid) {
+  const u = getUsuarioPorJid(chatId, jid);
+  return u?.moedas ?? 0;
+}
+
+export function transferirMoedas(chatId, jidOrigem, jidDestino, qtd) {
+  // Usa os jids reais do banco (resolve formato @lid vs @s.whatsapp.net)
+  const uOrigem  = getUsuarioPorJid(chatId, jidOrigem);
+  const uDestino = getUsuarioPorJid(chatId, jidDestino);
+  if (!uOrigem || !uDestino) return { ok: false, saldo: uOrigem?.moedas ?? 0, erro: "usuario_nao_encontrado" };
+  if (uOrigem.moedas < qtd) return { ok: false, saldo: uOrigem.moedas };
+  db.prepare("UPDATE usuarios SET moedas=moedas-? WHERE chat_id=? AND jid=?").run(qtd, chatId, uOrigem.jid);
+  db.prepare("UPDATE usuarios SET moedas=moedas+? WHERE chat_id=? AND jid=?").run(qtd, chatId, uDestino.jid);
+  return { ok: true, saldo: uOrigem.moedas - qtd };
+}
+
+// Bônus diário — retorna as moedas ganhas ou 0 se já resgatou hoje
+export function bonusDiario(chatId, jid, dias) {
+  const chave = `daily:${chatId}:${jid}`;
+  const hoje  = new Date().toDateString();
+  const ultimo = getConfig(chave, "");
+  if (ultimo === hoje) return 0;
+  // Quanto mais tempo no grupo, maior o bônus diário
+  const bonus = dias >= 30 ? 30 : dias >= 14 ? 20 : dias >= 7 ? 15 : dias >= 3 ? 10 : 5;
+  db.prepare("UPDATE usuarios SET moedas=moedas+? WHERE chat_id=? AND jid=?").run(bonus, chatId, jid);
+  setConfig(chave, hoje);
+  return bonus;
+}
+
+// Busca usuário por parte do nome (pra transferência)
+export function buscarUsuarioPorNome(chatId, nome) {
+  return db.prepare(
+    "SELECT * FROM usuarios WHERE chat_id=? AND LOWER(nome) LIKE LOWER(?)"
+  ).get(chatId, `%${nome}%`);
+}
+
+// Busca usuário por jid — tenta tanto @lid quanto @s.whatsapp.net
+// O WhatsApp usa dois formatos de JID e a menção pode vir em qualquer um.
+export function getUsuarioPorJid(chatId, jid) {
+  const numero = jid.split("@")[0].split(":")[0];
+  // Tenta match direto primeiro
+  const direto = db.prepare("SELECT * FROM usuarios WHERE chat_id=? AND jid=?").get(chatId, jid);
+  if (direto) return direto;
+  // Tenta pelo número sem sufixo (funciona com @lid e @s.whatsapp.net)
+  return db.prepare("SELECT * FROM usuarios WHERE chat_id=? AND (jid LIKE ? OR jid LIKE ?)")
+    .get(chatId, `${numero}@%`, `${numero}:%`);
+}
+
+export function getRanking(chatId, limit = 10) {
+  const rows = db.prepare(`
+    SELECT jid, nome, nivel, xp, moedas, msgs, cargo_custom, area_ti
+    FROM usuarios WHERE chat_id=?
+  `).all(chatId);
+  // Ordena pelo XP total acumulado (esforço real), não pelo XP residual.
+  return rows
+    .map(u => ({ ...u, xpTotal: xpTotal(u.nivel, u.xp) }))
+    .sort((a, b) => b.xpTotal - a.xpTotal)
+    .slice(0, limit);
 }
 
 // ── Enquetes ──────────────────────────────────────────────────────────────────
@@ -142,10 +218,11 @@ export function encerrarEnquete(enqueteId) {
 
 export function logMsg(chatId, jid, nome, tipo, texto) {
   db.prepare("INSERT INTO mensagens_log (chat_id,jid,nome,tipo,texto) VALUES (?,?,?,?,?)").run(chatId, jid, nome, tipo, texto || null);
-  // mantém só as últimas 500 mensagens por grupo
+  // mantém só as últimas 3000 mensagens por grupo
+  // (suficiente pra cobrir o resumo da semana mesmo em grupos bem ativos)
   db.prepare(`
     DELETE FROM mensagens_log WHERE chat_id=? AND id NOT IN (
-      SELECT id FROM mensagens_log WHERE chat_id=? ORDER BY id DESC LIMIT 500
+      SELECT id FROM mensagens_log WHERE chat_id=? ORDER BY id DESC LIMIT 3000
     )
   `).run(chatId, chatId);
 }
@@ -154,6 +231,41 @@ export function getMensagensRecentes(chatId, limit = 80) {
   return db.prepare(
     "SELECT nome, tipo, texto, ts FROM mensagens_log WHERE chat_id=? ORDER BY id DESC LIMIT ?"
   ).all(chatId, limit).reverse();
+}
+
+// Mensagens dentro de uma janela de tempo (em horas a partir de agora).
+// Usado pelo resumo pra cobrir "o dia" / "a semana" de verdade, e não só as últimas N.
+// O `limit` serve só de teto pra não estourar o tamanho do prompt.
+export function getMensagensPorPeriodo(chatId, horas, limit = 300) {
+  const desde = Math.floor(Date.now() / 1000) - horas * 3600;
+  return db.prepare(
+    "SELECT nome, tipo, texto, ts FROM mensagens_log WHERE chat_id=? AND ts>=? ORDER BY id DESC LIMIT ?"
+  ).all(chatId, desde, limit).reverse();
+}
+
+// Busca tudo que o bot sabe sobre uma pessoa específica no grupo.
+// Usado pela IA pra responder perguntas sobre alguém com contexto real.
+export function getContextoPessoa(chatId, nome) {
+  // Últimas 30 mensagens da pessoa
+  const msgs = db.prepare(`
+    SELECT texto, tipo, ts FROM mensagens_log
+    WHERE chat_id=? AND nome=? AND texto IS NOT NULL
+    ORDER BY id DESC LIMIT 30
+  `).all(chatId, nome);
+
+  // Dados de XP/perfil (busca por nome pois pode não ter o jid)
+  const perfil = db.prepare(
+    "SELECT nivel, xp, msgs, audios FROM usuarios WHERE chat_id=? AND nome=?"
+  ).get(chatId, nome);
+
+  // Com quem ela mais interagiu (quem ela mais respondeu)
+  const interacoes = db.prepare(`
+    SELECT nome, COUNT(*) as total FROM mensagens_log
+    WHERE chat_id=? AND texto LIKE '%' || ? || '%' AND nome != ?
+    ORDER BY total DESC LIMIT 3
+  `).all(chatId, nome, nome);
+
+  return { msgs: msgs.reverse(), perfil, interacoes };
 }
 
 export function getStatsGrupo(chatId) {
@@ -203,6 +315,50 @@ export function addAdmin(jid) {
 
 export function removeAdmin(jid) {
   db.prepare("DELETE FROM admins WHERE jid=?").run(jid);
+}
+
+// Retorna o admin que mais mandou mensagens nos últimos 7 dias
+export function getAdminDestaque(chatId) {
+  const semanaAtras = Math.floor(Date.now() / 1000) - 7 * 86400;
+  return db.prepare(`
+    SELECT m.nome, m.jid, COUNT(*) as total
+    FROM mensagens_log m
+    INNER JOIN admins a ON a.jid = m.jid
+    WHERE m.chat_id = ? AND m.ts >= ?
+    GROUP BY m.jid
+    ORDER BY total DESC
+    LIMIT 1
+  `).get(chatId, semanaAtras);
+}
+
+// ── Cargos ────────────────────────────────────────────────────────────────────
+
+export function setCargoCustom(chatId, jid, cargo) {
+  db.prepare("UPDATE usuarios SET cargo_custom=? WHERE chat_id=? AND jid=?")
+    .run(cargo, chatId, jid);
+}
+
+export function setAreaTi(chatId, jid, area) {
+  db.prepare("UPDATE usuarios SET area_ti=? WHERE chat_id=? AND jid=?")
+    .run(area, chatId, jid);
+}
+
+export function setSigno(chatId, jid, signo) {
+  db.prepare("UPDATE usuarios SET signo=? WHERE chat_id=? AND jid=?")
+    .run(signo, chatId, jid);
+}
+
+// Conta quantas pessoas do grupo são de cada signo (pro horóscopo do jornal).
+export function getSignosGrupo(chatId) {
+  return db.prepare(
+    "SELECT signo, COUNT(*) as total FROM usuarios WHERE chat_id=? AND signo IS NOT NULL GROUP BY signo ORDER BY total DESC"
+  ).all(chatId);
+}
+
+export function getDiasNoGrupo(chatId, jid) {
+  const u = db.prepare("SELECT entrou_em FROM usuarios WHERE chat_id=? AND jid=?").get(chatId, jid);
+  if (!u) return 0;
+  return Math.floor((Date.now() / 1000 - u.entrou_em) / 86400);
 }
 
 export default db;

@@ -10,9 +10,11 @@ import baileys, {
 
 import { aplicarEfeito, EFEITOS, textoMenu } from "./efeitos.js";
 import {
-  addXP, addAudio, addMoedas, logMsg, upsertUsuario,
+  addXP, addAudio, addMoedas, getMoedas, transferirMoedas,
+  bonusDiario, buscarUsuarioPorNome, getUsuarioPorJid,
+  logMsg, upsertUsuario, setCargoCustom, setAreaTi, setSigno, getAdminDestaque,
 } from "./db.js";
-import { textoRanking, textoPerfil, textoSubiuNivel } from "./xp.js";
+import { textoRanking, textoPerfil, textoSubiuNivel, AREAS_TI, textoRegras } from "./xp.js";
 import {
   cmdCriarEnquete, cmdVotar, cmdResultado, cmdEncerrar,
 } from "./enquetes.js";
@@ -24,6 +26,20 @@ import {
 
 const makeWASocket = baileys.default ?? baileys;
 const PORT = process.env.PORT || 3000;
+
+// Cooldown do modo livre: guarda o timestamp da última resposta por pessoa
+const cooldownModoLivre = new Map();
+
+// Cache de nomes (número-base do jid → pushName), alimentado pelas mensagens.
+// Serve pro boas-vindas: quando alguém entra, o nome às vezes ainda não
+// sincronizou no groupMetadata, mas se a pessoa já mandou msg antes a gente tem.
+const cacheNomes = new Map();
+function chaveNome(jid) {
+  return jid?.split("@")[0].split(":")[0];
+}
+function lembrarNome(jid, nome) {
+  if (jid && nome && !/^\+?\d{6,}$/.test(nome)) cacheNomes.set(chaveNome(jid), nome);
+}
 
 // ─── Servidor Express ─────────────────────────────────────────────────────────
 
@@ -105,12 +121,87 @@ async function iniciar() {
     }
   });
 
-  sock.ev.on("messages.upsert", async ({ messages, type }) => {
-    console.log(`📨 messages.upsert type=${type} count=${messages.length}`);
+  sock.ev.on("messages.upsert", ({ messages, type }) => {
     if (type !== "notify" && type !== "append") return;
     for (const msg of messages) {
-      try { await processarMensagem(sock, msg); }
-      catch (err) { console.error("Erro:", err.message); }
+      processarMensagem(sock, msg).catch(err => console.error("Erro:", err.message));
+    }
+  });
+
+  // Boas-vindas quando alguém entra no grupo
+  sock.ev.on("group-participants.update", async ({ id: chatId, participants, action }) => {
+    if (action !== "add") return;
+    for (const [idx, participante] of participants.entries()) {
+      try {
+        const jid = typeof participante === "string" ? participante : participante.id || String(participante);
+
+        // Aguarda 5s pra o Baileys sincronizar o perfil/nome da pessoa
+        await new Promise(r => setTimeout(r, 5000));
+
+        // Recarrega o metadata por participante: o groupMetadata pode estar
+        // defasado logo após o "add", então garantimos que o recém-chegado
+        // está contado. Se entrar mais de um de uma vez, somamos os restantes.
+        const meta = await sock.groupMetadata(chatId);
+        const jaContado = meta.participants.some(p =>
+          p.id === jid ||
+          p.id?.split("@")[0] === jid?.split("@")[0] ||
+          p.id?.split(":")[0] === jid?.split(":")[0]
+        );
+        const faltam = participants.length - 1 - idx; // outros deste lote ainda não processados
+
+        // Contagem dinâmica: lê o estado ATUAL do grupo a cada entrada, então
+        // já reflete quem saiu/foi removido (não é um contador que só cresce).
+        let total;
+        if (typeof meta.size === "number") {
+          // `meta.size` é a contagem oficial do WhatsApp e normalmente já
+          // inclui o recém-chegado. Só soma os outros do mesmo lote.
+          total = meta.size + faltam;
+        } else {
+          // Fallback: participants.length pode estar defasado logo após o "add",
+          // então garantimos que o recém-chegado entra na conta.
+          total = meta.participants.length + (jaContado ? 0 : 1) + faltam;
+        }
+
+        // Tenta pegar o nome de várias fontes
+        const p = meta.participants.find(p =>
+          p.id === jid ||
+          p.id?.split("@")[0] === jid?.split("@")[0] ||
+          p.id?.split(":")[0] === jid?.split(":")[0]
+        );
+
+        const ehNumero = (n) => !n || /^\+?\d{6,}$/.test(n);
+
+        // 1) metadata do grupo  2) cache de nomes (msgs anteriores)  3) banco
+        let nome = p?.notify || p?.name || p?.pushName;
+        if (ehNumero(nome)) nome = cacheNomes.get(chaveNome(jid)) || nome;
+        if (ehNumero(nome)) {
+          const uBanco = getUsuarioPorJid(chatId, jid);
+          if (uBanco?.nome && !ehNumero(uBanco.nome)) nome = uBanco.nome;
+        }
+
+        // 4) tenta o store de contatos do Baileys
+        if (ehNumero(nome)) {
+          try {
+            const c = sock.store?.contacts?.[jid] || sock.contacts?.[jid];
+            nome = c?.notify || c?.name || c?.verifiedName || nome;
+          } catch { /* ignora */ }
+        }
+
+        // Último recurso: nome genérico amigável (nunca o ID gigante do @lid)
+        if (ehNumero(nome)) nome = "novo(a) membro";
+
+        // Registra a entrada agora — assim `entrou_em` reflete a data real
+        // de entrada e a contagem de dias no grupo passa a funcionar.
+        // Só grava o nome se for um nome de verdade (não o placeholder genérico).
+        if (nome !== "novo(a) membro") upsertUsuario(chatId, jid, nome);
+
+        // LOG TEMPORÁRIO: confirma qual contagem bate com o número real do grupo.
+        console.log(`🔢 contagem: size=${meta.size} participants=${meta.participants.length} → total=${total}`);
+        await sock.sendMessage(chatId, { text: textoBemVindo(nome, total) });
+        console.log(`👋 Boas-vindas enviado pra ${nome} (${jid})`);
+      } catch (err) {
+        console.error("Erro boas-vindas:", err.message);
+      }
     }
   });
 }
@@ -130,6 +221,18 @@ function getJid(msg) {
   return msg.key.participant || msg.key.remoteJid;
 }
 
+// Normaliza o signo digitado (sem acento, minúsculo) pro nome canônico.
+const SIGNOS = {
+  aries: "Áries", touro: "Touro", gemeos: "Gêmeos", cancer: "Câncer",
+  leao: "Leão", virgem: "Virgem", libra: "Libra", escorpiao: "Escorpião",
+  sagitario: "Sagitário", capricornio: "Capricórnio", aquario: "Aquário", peixes: "Peixes",
+};
+function normalizarSigno(txt) {
+  if (!txt) return null;
+  const k = txt.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+  return SIGNOS[k] || null;
+}
+
 function isGrupo(msg) {
   return msg.key.remoteJid?.endsWith("@g.us");
 }
@@ -144,16 +247,37 @@ async function isAdminGrupo(sock, chatId, jid) {
   }
 }
 
-// Detecta menção ao bot pelo número, pela palavra "bot" ou pelo nome "axolotl"
+// Conjunto de jids (sem sufixo) que são admins do grupo, segundo o WhatsApp.
+// Usado pra separar admins de membros no ranking.
+async function getAdminsGrupo(sock, chatId) {
+  try {
+    const meta = await sock.groupMetadata(chatId);
+    const adminsRaw = meta.participants.filter(
+      p => p.admin === "admin" || p.admin === "superadmin"
+    );
+    // LOG TEMPORÁRIO: mostra os jids reais dos admins pra confirmar o formato.
+    console.log("🔍 admins do grupo:", adminsRaw.map(p => `${p.id} (${p.admin})`));
+    return new Set(adminsRaw.map(p => p.id.split("@")[0].split(":")[0]));
+  } catch (err) {
+    console.error("Erro ao buscar admins do grupo:", err.message);
+    return new Set();
+  }
+}
+
+// Detecta chamada direta ao bot.
+// Só ativa quando o nome/bot aparecer no INÍCIO da frase ou com vírgula/ponto,
+// indicando que a pessoa está falando COM o bot, não SOBRE ele.
+// Ex: "bot, o que você acha?" → ativa
+//     "e o nome axolotl"      → NÃO ativa (falando sobre, não para)
 function mencionouBot(texto, botJid) {
   if (!texto) return false;
-  const t = texto.toLowerCase();
+  const t = texto.toLowerCase().trim();
   const num = botJid?.split(":")[0]?.split("@")[0] || "";
   return (
-    t.includes("@bot") ||
-    /\bbot\b/.test(t) ||
-    t.includes("axolotl") ||
-    t.includes("axolot") ||
+    /^bot[,!?:\s]/.test(t) ||
+    /^axolotl[- ]?byte?[,!?:\s]/.test(t) ||
+    /^axolotl[,!?:\s]/.test(t) ||
+    t.startsWith("@bot") ||
     (num && texto.includes(num))
   );
 }
@@ -169,35 +293,61 @@ async function processarMensagem(sock, msg) {
   const nome   = getNome(msg);
   const botJid = sock.user?.id;
 
+  // Desembrulha a mensagem real: o WhatsApp aninha o conteúdo dentro de
+  // ephemeralMessage (mensagens temporárias), viewOnce (visualização única) etc.
+  // Sem isso, áudio/texto não eram detectados e a pessoa não ganhava XP.
+  // Normaliza msg.message pro conteúdo real, pra que comandos/menções/efeitos
+  // (que leem msg.message adiante) também funcionem com mensagens embrulhadas.
+  msg.message =
+    msg.message.ephemeralMessage?.message    ||
+    msg.message.viewOnceMessage?.message     ||
+    msg.message.viewOnceMessageV2?.message   ||
+    msg.message.viewOnceMessageV2Extension?.message ||
+    msg.message.documentWithCaptionMessage?.message ||
+    msg.message;
+
   // Detecta tipo e texto
   const tipoMsg =
-    msg.message.audioMessage                ? "audio"      :
-    msg.message.imageMessage                ? "imagem"     :
-    msg.message.videoMessage                ? "video"      :
-    msg.message.stickerMessage              ? "sticker"    : "text";
+    (msg.message.audioMessage || msg.message.pttMessage) ? "audio"   :
+    msg.message.imageMessage                             ? "imagem"  :
+    msg.message.videoMessage                             ? "video"   :
+    msg.message.stickerMessage                           ? "sticker" : "text";
 
   const texto = (
     msg.message.conversation ||
     msg.message.extendedTextMessage?.text ||
-    msg.message.imageMessage?.caption || ""
+    msg.message.imageMessage?.caption ||
+    msg.message.videoMessage?.caption || ""
   ).trim();
 
   // ── Registra no log e concede XP ──────────────────────────────────────────
+  lembrarNome(jid, nome);
   logMsg(chatId, jid, nome, tipoMsg, texto || null);
-  upsertUsuario(jid, nome);
+  upsertUsuario(chatId, jid, nome);
 
   if (tipoMsg === "audio") {
-    addAudio(jid, nome);
-    const { subiuNivel, nivelNovo } = addXP(jid, nome, 15);
-    if (subiuNivel) await sock.sendMessage(chatId, { text: textoSubiuNivel(nome, nivelNovo) });
+    addAudio(chatId, jid, nome);
+    addMoedas(chatId, jid, 3); // áudio vale mais
+    const { subiuNivel, nivelNovo } = addXP(chatId, jid, nome, 15);
+    if (subiuNivel) await sock.sendMessage(chatId, { text: textoSubiuNivel(chatId, jid, nome, nivelNovo) });
   } else if (tipoMsg === "text" && texto) {
-    const { subiuNivel, nivelNovo } = addXP(jid, nome, 5);
-    if (subiuNivel) await sock.sendMessage(chatId, { text: textoSubiuNivel(nome, nivelNovo) });
+    addMoedas(chatId, jid, 1); // 1 moeda por mensagem
+    const { subiuNivel, nivelNovo } = addXP(chatId, jid, nome, 5);
+    if (subiuNivel) await sock.sendMessage(chatId, { text: textoSubiuNivel(chatId, jid, nome, nivelNovo) });
   }
 
   // ── Comandos com ! ─────────────────────────────────────────────────────────
   if (texto.startsWith("!")) {
-    await processarComando(sock, msg, chatId, jid, nome, texto.toLowerCase(), botJid);
+    const cmd = texto.split(" ")[0].toLowerCase();
+    const CMDS_IA = ["!ia", "!bot", "!resumo", "!fofoca", "!previsao", "!compatibilidade", "!jornal"];
+    if (CMDS_IA.includes(cmd)) {
+      // Comandos lentos (IA): dispara sem bloquear outros comandos
+      processarComando(sock, msg, chatId, jid, nome, texto.toLowerCase(), botJid)
+        .catch(err => console.error("Erro cmd IA:", err.message));
+    } else {
+      // Comandos rápidos: responde instantaneamente
+      await processarComando(sock, msg, chatId, jid, nome, texto.toLowerCase(), botJid);
+    }
     return;
   }
 
@@ -208,18 +358,30 @@ async function processarMensagem(sock, msg) {
       .replace(/\baxolotl?-?byte?\b[,]?/gi, "")
       .replace(/\bbot\b[,]?/gi, "")
       .trim();
-    const resposta = await responderIA(chatId, pergunta || texto, nome);
-    await sock.sendMessage(chatId, { text: resposta }, { quoted: msg });
+    // Dispara sem bloquear
+    ;(async () => {
+      await sock.sendPresenceUpdate("composing", chatId);
+      const resposta = await responderIA(chatId, pergunta || texto, nome);
+      await sock.sendPresenceUpdate("paused", chatId);
+      await sock.sendMessage(chatId, { text: resposta }, { quoted: msg });
+    })().catch(err => console.error("Erro menção:", err.message));
     return;
   }
 
   // ── Modo livre: IA responde espontaneamente ────────────────────────────────
-  console.log(`🔍 modolivre check: isGrupo=${isGrupo(msg)} modoLivre=${isModoLivre(chatId)} tipo=${tipoMsg} textoLen=${texto.length}`);
   if (isGrupo(msg) && isModoLivre(chatId) && tipoMsg === "text" && texto.length >= 2) {
-    console.log(`🤖 chamando respostaModoLivre para: "${texto}"`);
-    const resposta = await respostaModoLivre(chatId, nome, texto);
-    console.log(`🤖 resposta: ${resposta}`);
-    if (resposta) await sock.sendMessage(chatId, { text: resposta }, { quoted: msg });
+    const agora = Date.now();
+    const chave = `${chatId}:${jid}`;
+    const ultimo = cooldownModoLivre.get(chave) || 0;
+    if (agora - ultimo < 20_000) return;
+    cooldownModoLivre.set(chave, agora);
+    // Dispara sem bloquear
+    ;(async () => {
+      await sock.sendPresenceUpdate("composing", chatId);
+      const resposta = await respostaModoLivre(chatId, nome, texto);
+      await sock.sendPresenceUpdate("paused", chatId);
+      if (resposta) await sock.sendMessage(chatId, { text: resposta }, { quoted: msg });
+    })().catch(err => console.error("Erro modo livre:", err.message));
   }
 }
 
@@ -258,12 +420,102 @@ async function processarComando(sock, msg, chatId, jid, nome, texto, botJid) {
 
   // ── XP / Gamificação ──────────────────────────────────────────────────────
   if (cmd === "!ranking" || cmd === "!top") {
-    await sock.sendMessage(chatId, { text: textoRanking() });
+    const admins = await getAdminsGrupo(sock, chatId);
+    await sock.sendMessage(chatId, { text: textoRanking(chatId, admins) });
     return;
   }
 
   if (cmd === "!perfil" || cmd === "!xp") {
-    await sock.sendMessage(chatId, { text: textoPerfil(jid) });
+    await sock.sendMessage(chatId, { text: textoPerfil(chatId, jid) });
+    return;
+  }
+
+  if (cmd === "!moedas" || cmd === "!saldo") {
+    const u = getUsuarioPorJid(chatId, jid);
+    const saldo = u?.moedas ?? 0;
+    const msgs  = u?.msgs ?? 0;
+    await sock.sendMessage(chatId, {
+      text: `💰 *${nome}*, você tem *${saldo} moedas*.\n\n` +
+            `📊 Suas mensagens no grupo: *${msgs}*\n\n` +
+            `⚡ *Como ganhar XP:*\n` +
+            `• +5 XP por mensagem de texto\n` +
+            `• +15 XP por áudio\n` +
+            `• XP sobe seu nível e seu cargo (use *!perfil*)\n\n` +
+            `💰 *Como ganhar moedas:*\n` +
+            `• +1 moeda por mensagem\n` +
+            `• +3 moedas por áudio\n` +
+            `• *!daily* — bônus diário (resgate 1x/dia)\n\n` +
+            `*!transferir @pessoa 50* — enviar moedas`
+    }, { quoted: msg });
+    return;
+  }
+
+  if (cmd === "!daily") {
+    const { getDiasNoGrupo } = await import("./db.js");
+    const dias  = getDiasNoGrupo(chatId, jid);
+    const bonus = bonusDiario(chatId, jid, dias);
+    if (bonus === 0) {
+      await sock.sendMessage(chatId, { text: `⏳ *${nome}*, você já resgatou o bônus de hoje!\nVolte amanhã. 😄` }, { quoted: msg });
+    } else {
+      const saldo = getMoedas(chatId, jid);
+      await sock.sendMessage(chatId, {
+        text: `🎁 Bônus diário resgatado!\n\n+*${bonus} moedas* (${dias} dias no grupo)\n💰 Saldo: *${saldo} moedas*`
+      }, { quoted: msg });
+    }
+    return;
+  }
+
+  if (cmd === "!transferir" || cmd === "!pix") {
+    const partes    = texto.replace(cmd, "").trim().split(" ");
+    const qtd       = parseInt(partes[partes.length - 1]);
+    const alvoTexto = partes.slice(0, -1).join(" ").replace(/@/g, "").trim();
+
+    if (!alvoTexto || isNaN(qtd) || qtd <= 0) {
+      await sock.sendMessage(chatId, { text: "❗ Use: *!transferir @nome 50*" }, { quoted: msg });
+      return;
+    }
+
+    // Busca o usuário de origem pelo jid real do banco
+    const uOrigem = getUsuarioPorJid(chatId, jid);
+    if (!uOrigem) {
+      await sock.sendMessage(chatId, { text: "❗ Você ainda não tem perfil. Manda uma mensagem primeiro!" }, { quoted: msg });
+      return;
+    }
+
+    // Busca o destino por menção ou nome
+    const mencionado = msg.message.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
+    const uDestino   = mencionado
+      ? getUsuarioPorJid(chatId, mencionado)
+      : buscarUsuarioPorNome(chatId, alvoTexto);
+
+    if (!uDestino) {
+      await sock.sendMessage(chatId, { text: `❗ Não encontrei ninguém com esse nome no grupo.` }, { quoted: msg });
+      return;
+    }
+    if (uOrigem.jid === uDestino.jid) {
+      await sock.sendMessage(chatId, { text: "😅 Você não pode transferir pra si mesmo." }, { quoted: msg });
+      return;
+    }
+    if (uOrigem.moedas < qtd) {
+      await sock.sendMessage(chatId, {
+        text: `❌ Saldo insuficiente!\nVocê tem *${uOrigem.moedas} moedas* e tentou enviar *${qtd}*.`
+      }, { quoted: msg });
+      return;
+    }
+
+    // Faz a transferência usando os jids reais do banco
+    const resultado = transferirMoedas(chatId, uOrigem.jid, uDestino.jid, qtd);
+    if (!resultado.ok) {
+      await sock.sendMessage(chatId, { text: `❌ Erro na transferência. Tenta de novo!` }, { quoted: msg });
+      return;
+    }
+
+    await sock.sendMessage(chatId, {
+      text: `✅ Transferência realizada!\n\n` +
+            `💸 *${uOrigem.nome}* → *${uDestino.nome}*\n` +
+            `💰 Valor: *${qtd} moedas*\n` +
+            `📊 Seu saldo restante: *${resultado.saldo} moedas*`
+    });
     return;
   }
 
@@ -287,7 +539,23 @@ async function processarComando(sock, msg, chatId, jid, nome, texto, botJid) {
 
   // ── Estatísticas ──────────────────────────────────────────────────────────
   if (cmd === "!jornal") {
-    await sock.sendMessage(chatId, { text: textoJornal(chatId) });
+    await sock.sendMessage(chatId, { text: "🗞️ Fechando a edição de hoje..." });
+    const jornal = await textoJornal(chatId);
+    await sock.sendMessage(chatId, { text: jornal });
+    return;
+  }
+
+  if (cmd === "!signo") {
+    const arg = texto.split(" ").slice(1).join(" ").trim();
+    const signo = normalizarSigno(arg);
+    if (!signo) {
+      await sock.sendMessage(chatId, {
+        text: "🔮 Use *!signo <seu signo>*\nEx: *!signo leão*\n\nSignos: Áries, Touro, Gêmeos, Câncer, Leão, Virgem, Libra, Escorpião, Sagitário, Capricórnio, Aquário, Peixes",
+      }, { quoted: msg });
+      return;
+    }
+    setSigno(chatId, jid, signo);
+    await sock.sendMessage(chatId, { text: `🔮 Signo registrado: *${signo}*!\nAgora você aparece no horóscopo do *!jornal* 🌟` }, { quoted: msg });
     return;
   }
   if (cmd === "!stats" || cmd === "!estatisticas") {
@@ -337,12 +605,53 @@ async function processarComando(sock, msg, chatId, jid, nome, texto, botJid) {
       await sock.sendMessage(chatId, { text: "Me faz uma pergunta! Ex: *!ia o que você acha do grupo?*" });
       return;
     }
+    await sock.sendPresenceUpdate("composing", chatId);
     const r = await responderIA(chatId, pergunta, nome);
+    await sock.sendPresenceUpdate("paused", chatId);
     await sock.sendMessage(chatId, { text: r }, { quoted: msg });
     return;
   }
 
   // ── Modo livre (somente admins do grupo) ─────────────────────────────────
+  if (cmd === "!regras" || cmd === "!cargos") {
+    await sock.sendMessage(chatId, { text: textoRegras() });
+    return;
+  }
+
+  if (cmd === "!destaque") {
+    const d = getAdminDestaque(chatId);
+    if (!d) {
+      await sock.sendMessage(chatId, { text: "📊 Ainda sem dados suficientes pra eleger o destaque da semana." });
+      return;
+    }
+    await sock.sendMessage(chatId, {
+      text: `🌟 *Admin Destaque da Semana*\n\n👑 *${d.nome}*\n📨 ${d.total} mensagens nos últimos 7 dias\n\nObrigado por cuidar do grupo! 💪`
+    });
+    return;
+  }
+
+  // !cargo [nome do cargo] — admins definem seu cargo personalizado
+  // Ex: !cargo Dev Backend  →  aparece como [Dev Backend] no ranking e perfil
+  if (cmd === "!cargo") {
+    if (!await isAdminGrupo(sock, chatId, jid)) {
+      await sock.sendMessage(chatId, { text: "🔒 Só admins do grupo podem definir cargos personalizados." }, { quoted: msg });
+      return;
+    }
+    const novoCargo = texto.replace("!cargo", "").trim();
+    if (!novoCargo) {
+      const lista = AREAS_TI.join(", ");
+      await sock.sendMessage(chatId, { text: `✏️ Use: *!cargo <cargo>*\nEx: !cargo Dev Backend\n\nSugestões: ${lista}` });
+      return;
+    }
+    if (novoCargo.length > 30) {
+      await sock.sendMessage(chatId, { text: "❗ Cargo muito longo. Máximo 30 caracteres." });
+      return;
+    }
+    setCargoCustom(chatId, jid, novoCargo);
+    await sock.sendMessage(chatId, { text: `✅ Cargo definido: *[${novoCargo}]*` }, { quoted: msg });
+    return;
+  }
+
   if (cmd === "!modolivre") {
     if (!await isAdminGrupo(sock, chatId, jid)) {
       await sock.sendMessage(chatId, { text: "🔒 Só admins do grupo podem ativar o modo livre." });
@@ -394,6 +703,27 @@ async function aplicarAudio(sock, chatId, chave, audioId, autor, citada, quotedM
   }
 }
 
+// ─── Boas-vindas ─────────────────────────────────────────────────────────────
+
+function textoBemVindo(nome, totalMembros) {
+  return (
+    `👋 Seja bem-vindo(a), *${nome}*! 🎉\n\n` +
+    `Você é o membro *#${totalMembros}* da galera do TI!\n\n` +
+    `Aqui você começa como *🆕 Novato* — mas não por muito tempo:\n\n` +
+    `🆕 *Novato* → dias 0 a 3\n` +
+    `🎓 *Estagiário* → a partir do 4º dia\n` +
+    `💻 *Junior* → a partir do 9º dia\n` +
+    `⚙️ *Pleno* → 2 semanas + participação\n` +
+    `🚀 *Sênior* → 1 mês + participação\n` +
+    `🏗️ *Tech Lead*, 🧠 *Arquiteto*, 👑 *CTO do Grupo*...\n\n` +
+    `Quanto mais você participar, mais rápido sobe! ⚡\n` +
+    `• Mensagem de texto = *+5 XP*\n` +
+    `• Áudio = *+15 XP*\n\n` +
+    `Use *!menu* pra ver todos os comandos e *!regras* pra entender o sistema de cargos.\n\n` +
+    `Bora participar? 🚀`
+  );
+}
+
 // ─── Menu completo ────────────────────────────────────────────────────────────
 
 function textoMenuCompleto() {
@@ -401,12 +731,20 @@ function textoMenuCompleto() {
     `🤖 *Menu do Bot*\n\n` +
 
     `🎙️ *Efeitos de Voz*\n` +
-    `  !voz — menu de efeitos (responda um áudio)\n` +
-    `  !demonio !esquilo !robo !estadio !agudo !grave\n\n` +
+    `  1. Responda um áudio com *!voz*\n` +
+    `  2. Escolha o efeito nos botões\n` +
+    `  Ou direto: *!demonio* *!esquilo* *!robo*\n` +
+    `             *!estadio* *!agudo* *!grave*\n\n` +
 
     `🏆 *Gamificação*\n` +
     `  !ranking — top do grupo\n` +
-    `  !perfil — seu XP e nível\n\n` +
+    `  !perfil — seu XP, cargo e moedas\n` +
+    `  !moedas — ver seu saldo de moedas\n` +
+    `  !daily — bônus diário de moedas 🎁\n` +
+    `  !transferir @pessoa 50 — enviar moedas\n` +
+    `  !regras — sistema de cargos e XP\n` +
+    `  !destaque — admin destaque da semana 🌟\n` +
+    `  !cargo <nome> — cargo personalizado (admins)\n\n` +
 
     `📊 *Enquetes*\n` +
     `  !enquete Pergunta? Op1 | Op2 | Op3\n` +
@@ -415,12 +753,16 @@ function textoMenuCompleto() {
     `  !encerrar — encerrar enquete\n\n` +
 
     `📰 *Grupo*\n` +
-    `  !jornal — jornal do grupo\n` +
+    `  !jornal — jornal completo do grupo 🗞️\n` +
+    `  !signo <signo> — entra no horóscopo do jornal 🔮\n` +
     `  !stats — estatísticas\n` +
     `  !sumidos — quem sumiu\n\n` +
 
-    `🤖 *IA*\n` +
-    `  !ia <pergunta> — fala com o bot\n` +
+    `🤖 *IA (Axolotl-Byte)*\n` +
+    `  !ia <pergunta> — fala direto com o bot\n` +
+    `  !bot <pergunta> — mesma coisa\n` +
+    `  bot, <pergunta> — chama pelo nome (sem !)\n` +
+    `  axolotl, <pergunta> — também funciona\n` +
     `  !resumo — resumo do dia\n` +
     `  !resumo semana — resumo da semana\n` +
     `  !fofoca — fofoca do grupo\n` +
