@@ -340,13 +340,15 @@ async function processarMensagem(sock, msg) {
   if (texto.startsWith("!")) {
     const cmd = texto.split(" ")[0].toLowerCase();
     const CMDS_IA = ["!ia", "!bot", "!resumo", "!fofoca", "!previsao", "!compatibilidade", "!jornal", "!musica", "!music", "!play"];
+    // Passa o texto ORIGINAL (não lowercased): links do YouTube e outros
+    // argumentos são case-sensitive. O cmd é normalizado dentro do handler.
     if (CMDS_IA.includes(cmd)) {
       // Comandos lentos (IA): dispara sem bloquear outros comandos
-      processarComando(sock, msg, chatId, jid, nome, texto.toLowerCase(), botJid)
+      processarComando(sock, msg, chatId, jid, nome, texto, botJid)
         .catch(err => console.error("Erro cmd IA:", err.message));
     } else {
       // Comandos rápidos: responde instantaneamente
-      await processarComando(sock, msg, chatId, jid, nome, texto.toLowerCase(), botJid);
+      await processarComando(sock, msg, chatId, jid, nome, texto, botJid);
     }
     return;
   }
@@ -388,7 +390,10 @@ async function processarMensagem(sock, msg) {
 // ─── Roteador de comandos ─────────────────────────────────────────────────────
 
 async function processarComando(sock, msg, chatId, jid, nome, texto, botJid) {
-  const cmd = texto.split(" ")[0];
+  // cmd normalizado (lowercase) pra casar; texto preserva o case do argumento.
+  const cmd = texto.split(" ")[0].toLowerCase();
+  // Remove o comando do início, preservando o resto exatamente como digitado.
+  const semCmd = () => texto.slice(texto.split(" ")[0].length).trim();
 
   // ── Efeitos de voz ────────────────────────────────────────────────────────
   if (["!menu", "!ajuda", "!help"].includes(cmd)) {
@@ -466,7 +471,7 @@ async function processarComando(sock, msg, chatId, jid, nome, texto, botJid) {
   }
 
   if (cmd === "!transferir" || cmd === "!pix") {
-    const partes    = texto.replace(cmd, "").trim().split(" ");
+    const partes    = semCmd().split(" ");
     const qtd       = parseInt(partes[partes.length - 1]);
     const alvoTexto = partes.slice(0, -1).join(" ").replace(/@/g, "").trim();
 
@@ -551,7 +556,7 @@ async function processarComando(sock, msg, chatId, jid, nome, texto, botJid) {
   }
 
   if (cmd === "!musica" || cmd === "!music" || cmd === "!play") {
-    const consulta = texto.split(" ").slice(1).join(" ").trim();
+    const consulta = semCmd();
     if (!consulta) {
       await sock.sendMessage(chatId, {
         text: "🎵 Use *!musica <nome ou link>*\nEx: *!musica imagine dragons believer*",
@@ -561,17 +566,37 @@ async function processarComando(sock, msg, chatId, jid, nome, texto, botJid) {
     await sock.sendMessage(chatId, { text: `🎶 Procurando *${consulta}*... (pode levar alguns segundos)` }, { quoted: msg });
     try {
       const { buffer, titulo } = await baixarMusica(consulta);
-      await sock.sendMessage(chatId, {
-        audio: buffer,
-        mimetype: "audio/mpeg",
-        fileName: `${titulo}.mp3`,
-        ptt: false,
-      }, { quoted: msg });
+
+      // O upload de mídia do WhatsApp às vezes falha ("upload failed on all
+      // hosts") por instabilidade nos servidores. Tentamos algumas vezes e,
+      // se o envio como áudio não for, caímos pra documento (outro caminho).
+      const enviar = async (conteudo) => {
+        let ultimoErro;
+        for (let i = 1; i <= 3; i++) {
+          try { return await sock.sendMessage(chatId, conteudo, { quoted: msg }); }
+          catch (e) {
+            ultimoErro = e;
+            console.warn(`tentativa de envio ${i} falhou: ${e.message}`);
+            await new Promise(r => setTimeout(r, 1500 * i));
+          }
+        }
+        throw ultimoErro;
+      };
+
+      try {
+        await enviar({ audio: buffer, mimetype: "audio/mpeg", fileName: `${titulo}.mp3`, ptt: false });
+      } catch {
+        // Fallback: manda como documento (arquivo) — sobe por outra via.
+        await enviar({ document: buffer, mimetype: "audio/mpeg", fileName: `${titulo}.mp3` });
+      }
       await sock.sendMessage(chatId, { text: `🎵 *${titulo}*` });
       console.log(`🎵 Música enviada: ${titulo}`);
     } catch (err) {
       console.error("❌ Falha música:", err.message);
-      await sock.sendMessage(chatId, { text: `❌ ${err.message}` }, { quoted: msg });
+      const amigavel = /upload failed/i.test(err.message)
+        ? "O WhatsApp recusou o envio do arquivo agora (instabilidade). Tenta de novo em instantes."
+        : err.message;
+      await sock.sendMessage(chatId, { text: `❌ ${amigavel}` }, { quoted: msg });
     }
     return;
   }
@@ -586,7 +611,7 @@ async function processarComando(sock, msg, chatId, jid, nome, texto, botJid) {
 
   // ── IA / NPC ──────────────────────────────────────────────────────────────
   if (cmd === "!resumo") {
-    const tipo = texto.includes("semana") ? "semana" : "dia";
+    const tipo = texto.toLowerCase().includes("semana") ? "semana" : "dia";
     await sock.sendMessage(chatId, { text: "⏳ Gerando resumo..." });
     const r = await resumoGrupo(chatId, tipo);
     await sock.sendMessage(chatId, { text: r });
@@ -601,7 +626,7 @@ async function processarComando(sock, msg, chatId, jid, nome, texto, botJid) {
   }
 
   if (cmd === "!previsao" || cmd === "!futuro") {
-    const alvo = texto.replace(cmd, "").replace(/[<>@]/g, "").trim() || nome;
+    const alvo = semCmd().replace(/[<>@]/g, "").trim() || nome;
     const r = await previsaoFuturo(alvo, chatId);
     await sock.sendMessage(chatId, { text: r });
     return;
@@ -610,7 +635,7 @@ async function processarComando(sock, msg, chatId, jid, nome, texto, botJid) {
   if (cmd === "!compatibilidade" || cmd === "!compat") {
     // Limpa <> (placeholders que a pessoa às vezes digita) e @ de menção.
     const limpar = (s) => (s || "").replace(/[<>@]/g, "").trim();
-    const partes = texto.replace(cmd, "").trim().split(/\s+e\s+|\s*\|\s*/i);
+    const partes = semCmd().split(/\s+e\s+|\s*\|\s*/i);
     const n1 = limpar(partes[0]) || nome;
     const n2 = limpar(partes[1]) || "o grupo";
     if (!partes[1]) {
@@ -625,7 +650,7 @@ async function processarComando(sock, msg, chatId, jid, nome, texto, botJid) {
   }
 
   if (cmd === "!ia" || cmd === "!bot") {
-    const pergunta = texto.replace(cmd, "").trim();
+    const pergunta = semCmd();
     if (!pergunta) {
       await sock.sendMessage(chatId, { text: "Me faz uma pergunta! Ex: *!ia o que você acha do grupo?*" });
       return;
@@ -662,7 +687,7 @@ async function processarComando(sock, msg, chatId, jid, nome, texto, botJid) {
       await sock.sendMessage(chatId, { text: "🔒 Só admins do grupo podem definir cargos personalizados." }, { quoted: msg });
       return;
     }
-    const novoCargo = texto.replace("!cargo", "").trim();
+    const novoCargo = semCmd();
     if (!novoCargo) {
       const lista = AREAS_TI.join(", ");
       await sock.sendMessage(chatId, { text: `✏️ Use: *!cargo <cargo>*\nEx: !cargo Dev Backend\n\nSugestões: ${lista}` });

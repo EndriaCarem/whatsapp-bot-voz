@@ -51,10 +51,10 @@ export async function baixarMusica(consulta) {
     const stdout = await rodar("yt-dlp", [
       "-x",                          // extrai só o áudio
       "--audio-format", "mp3",       // converte pra mp3 (usa o ffmpeg)
-      "--audio-quality", "0",        // melhor qualidade
+      "--audio-quality", "128K",     // 128kbps: ótimo pra voz/música no WhatsApp e leve
+      "-f", "bestaudio/best",        // pega só a faixa de áudio (não o vídeo inteiro)
       "--no-playlist",               // nunca baixa playlist inteira
       "--match-filter", `duration < ${LIMITE_SEGUNDOS}`, // ignora coisas longas demais
-      "--max-filesize", "20M",       // teto de download
       "--print", "after_move:%(title)s", // título APÓS baixar (não ativa modo simulação)
       "--no-warnings",
       "-o", `${base}.%(ext)s`,
