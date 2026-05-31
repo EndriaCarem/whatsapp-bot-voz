@@ -8,6 +8,7 @@ db.exec(`
     jid        TEXT NOT NULL,
     nome       TEXT NOT NULL DEFAULT 'Anônimo',
     xp         INTEGER NOT NULL DEFAULT 0,
+    xp_mes     INTEGER NOT NULL DEFAULT 0,
     nivel      INTEGER NOT NULL DEFAULT 1,
     moedas     INTEGER NOT NULL DEFAULT 0,
     msgs       INTEGER NOT NULL DEFAULT 0,
@@ -72,6 +73,9 @@ function adicionarColuna(tabela, coluna, tipo) {
   }
 }
 adicionarColuna("usuarios", "signo", "TEXT");
+// XP da temporada (mensal): zera todo mês, usado só no ranking. O `xp`/`nivel`
+// continuam sendo o total permanente que define cargo/senioridade.
+adicionarColuna("usuarios", "xp_mes", "INTEGER NOT NULL DEFAULT 0");
 
 // ── Usuários ──────────────────────────────────────────────────────────────────
 
@@ -107,8 +111,9 @@ export function addXP(chatId, jid, nome, qtd) {
     xpNovo -= XP_POR_NIVEL(nivel + 1);
     nivel++;
   }
-  db.prepare("UPDATE usuarios SET xp=?, nivel=?, msgs=msgs+1, ultima_msg=? WHERE chat_id=? AND jid=?")
-    .run(xpNovo, nivel, Date.now(), chatId, jid);
+  // xp/nivel = total permanente (define cargo). xp_mes = temporada (zera no mês).
+  db.prepare("UPDATE usuarios SET xp=?, nivel=?, xp_mes=xp_mes+?, msgs=msgs+1, ultima_msg=? WHERE chat_id=? AND jid=?")
+    .run(xpNovo, nivel, qtd, Date.now(), chatId, jid);
   return { subiuNivel: nivel > u.nivel, nivelNovo: nivel };
 }
 
@@ -171,14 +176,50 @@ export function getUsuarioPorJid(chatId, jid) {
 
 export function getRanking(chatId, limit = 10) {
   const rows = db.prepare(`
-    SELECT jid, nome, nivel, xp, moedas, msgs, cargo_custom, area_ti
+    SELECT jid, nome, nivel, xp, xp_mes, moedas, msgs, cargo_custom, area_ti
     FROM usuarios WHERE chat_id=?
   `).all(chatId);
-  // Ordena pelo XP total acumulado (esforço real), não pelo XP residual.
+  // Ranking = competição da temporada → ordena pelo XP do mês.
+  // O cargo/nível continua usando o XP total (campo nivel), preservado no reset.
   return rows
     .map(u => ({ ...u, xpTotal: xpTotal(u.nivel, u.xp) }))
-    .sort((a, b) => b.xpTotal - a.xpTotal)
+    .sort((a, b) => (b.xp_mes - a.xp_mes) || (b.xpTotal - a.xpTotal))
     .slice(0, limit);
+}
+
+// ── Temporada mensal ────────────────────────────────────────────────────────
+// O RANKING é uma "temporada" mensal: compete-se pelo XP do mês (xp_mes), que
+// zera todo mês. O XP TOTAL (xp/nivel) e a senioridade/cargo NÃO zeram — assim
+// quem é Sênior continua Sênior, e o cargo não despenca toda virada de mês.
+// Preservados no reset: xp, nivel, moedas, entrou_em, cargos. Zera só: xp_mes.
+
+function mesAtual() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+// Verifica se virou o mês para este grupo. Se virou, zera a temporada e
+// retorna o mês anterior (pra avisar no grupo); senão retorna null.
+export function checarResetMensal(chatId) {
+  const chave = `temporada:${chatId}`;
+  const mes   = mesAtual();
+  const ultimo = getConfig(chave, null);
+
+  // Primeira vez que vemos o grupo: só registra o mês, não zera nada.
+  if (ultimo === null) {
+    setConfig(chave, mes);
+    return null;
+  }
+  if (ultimo === mes) return null;
+
+  // Virou o mês → zera SÓ o XP da temporada. Cargo/nível/total continuam.
+  db.prepare("UPDATE usuarios SET xp_mes=0 WHERE chat_id=?").run(chatId);
+  setConfig(chave, mes);
+  return ultimo; // mês que acabou
+}
+
+export function getMesTemporada() {
+  return mesAtual();
 }
 
 // ── Enquetes ──────────────────────────────────────────────────────────────────
@@ -343,17 +384,6 @@ export function setAreaTi(chatId, jid, area) {
     .run(area, chatId, jid);
 }
 
-export function setSigno(chatId, jid, signo) {
-  db.prepare("UPDATE usuarios SET signo=? WHERE chat_id=? AND jid=?")
-    .run(signo, chatId, jid);
-}
-
-// Conta quantas pessoas do grupo são de cada signo (pro horóscopo do jornal).
-export function getSignosGrupo(chatId) {
-  return db.prepare(
-    "SELECT signo, COUNT(*) as total FROM usuarios WHERE chat_id=? AND signo IS NOT NULL GROUP BY signo ORDER BY total DESC"
-  ).all(chatId);
-}
 
 export function getDiasNoGrupo(chatId, jid) {
   const u = db.prepare("SELECT entrou_em FROM usuarios WHERE chat_id=? AND jid=?").get(chatId, jid);

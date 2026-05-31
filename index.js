@@ -9,16 +9,18 @@ import baileys, {
 } from "@whiskeysockets/baileys";
 
 import { aplicarEfeito, EFEITOS, textoMenu } from "./efeitos.js";
+import { baixarMusica } from "./musica.js";
 import {
   addXP, addAudio, addMoedas, getMoedas, transferirMoedas,
   bonusDiario, buscarUsuarioPorNome, getUsuarioPorJid,
-  logMsg, upsertUsuario, setCargoCustom, setAreaTi, setSigno, getAdminDestaque,
+  logMsg, upsertUsuario, setCargoCustom, setAreaTi, getAdminDestaque,
+  checarResetMensal,
 } from "./db.js";
 import { textoRanking, textoPerfil, textoSubiuNivel, AREAS_TI, textoRegras } from "./xp.js";
 import {
   cmdCriarEnquete, cmdVotar, cmdResultado, cmdEncerrar,
 } from "./enquetes.js";
-import { textoJornal, textoStats, textoSumidos } from "./stats.js";
+import { textoJornal, textoStats, textoSumidos, textoHoroscopo } from "./stats.js";
 import {
   responderIA, resumoGrupo, fofocaGrupo, previsaoFuturo,
   compatibilidade, respostaModoLivre, isModoLivre, setModoLivre,
@@ -195,8 +197,6 @@ async function iniciar() {
         // Só grava o nome se for um nome de verdade (não o placeholder genérico).
         if (nome !== "novo(a) membro") upsertUsuario(chatId, jid, nome);
 
-        // LOG TEMPORÁRIO: confirma qual contagem bate com o número real do grupo.
-        console.log(`🔢 contagem: size=${meta.size} participants=${meta.participants.length} → total=${total}`);
         await sock.sendMessage(chatId, { text: textoBemVindo(nome, total) });
         console.log(`👋 Boas-vindas enviado pra ${nome} (${jid})`);
       } catch (err) {
@@ -221,17 +221,6 @@ function getJid(msg) {
   return msg.key.participant || msg.key.remoteJid;
 }
 
-// Normaliza o signo digitado (sem acento, minúsculo) pro nome canônico.
-const SIGNOS = {
-  aries: "Áries", touro: "Touro", gemeos: "Gêmeos", cancer: "Câncer",
-  leao: "Leão", virgem: "Virgem", libra: "Libra", escorpiao: "Escorpião",
-  sagitario: "Sagitário", capricornio: "Capricórnio", aquario: "Aquário", peixes: "Peixes",
-};
-function normalizarSigno(txt) {
-  if (!txt) return null;
-  const k = txt.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
-  return SIGNOS[k] || null;
-}
 
 function isGrupo(msg) {
   return msg.key.remoteJid?.endsWith("@g.us");
@@ -255,8 +244,6 @@ async function getAdminsGrupo(sock, chatId) {
     const adminsRaw = meta.participants.filter(
       p => p.admin === "admin" || p.admin === "superadmin"
     );
-    // LOG TEMPORÁRIO: mostra os jids reais dos admins pra confirmar o formato.
-    console.log("🔍 admins do grupo:", adminsRaw.map(p => `${p.id} (${p.admin})`));
     return new Set(adminsRaw.map(p => p.id.split("@")[0].split(":")[0]));
   } catch (err) {
     console.error("Erro ao buscar admins do grupo:", err.message);
@@ -320,6 +307,19 @@ async function processarMensagem(sock, msg) {
     msg.message.videoMessage?.caption || ""
   ).trim();
 
+  // ── Temporada mensal: zera o ranking na virada do mês ─────────────────────
+  if (isGrupo(msg)) {
+    const mesAnterior = checarResetMensal(chatId);
+    if (mesAnterior) {
+      await sock.sendMessage(chatId, {
+        text: "🏁 *NOVA TEMPORADA!* 🏁\n\n" +
+              `O ranking de *${mesAnterior}* foi encerrado e o XP do mês de todos foi zerado.\n` +
+              "A corrida pelo topo recomeçou — bora! 🚀\n\n" +
+              "_Seu cargo, nível, senioridade, moedas e tempo de grupo foram mantidos._",
+      });
+    }
+  }
+
   // ── Registra no log e concede XP ──────────────────────────────────────────
   lembrarNome(jid, nome);
   logMsg(chatId, jid, nome, tipoMsg, texto || null);
@@ -339,7 +339,7 @@ async function processarMensagem(sock, msg) {
   // ── Comandos com ! ─────────────────────────────────────────────────────────
   if (texto.startsWith("!")) {
     const cmd = texto.split(" ")[0].toLowerCase();
-    const CMDS_IA = ["!ia", "!bot", "!resumo", "!fofoca", "!previsao", "!compatibilidade", "!jornal"];
+    const CMDS_IA = ["!ia", "!bot", "!resumo", "!fofoca", "!previsao", "!compatibilidade", "!jornal", "!musica", "!music", "!play"];
     if (CMDS_IA.includes(cmd)) {
       // Comandos lentos (IA): dispara sem bloquear outros comandos
       processarComando(sock, msg, chatId, jid, nome, texto.toLowerCase(), botJid)
@@ -545,17 +545,34 @@ async function processarComando(sock, msg, chatId, jid, nome, texto, botJid) {
     return;
   }
 
-  if (cmd === "!signo") {
-    const arg = texto.split(" ").slice(1).join(" ").trim();
-    const signo = normalizarSigno(arg);
-    if (!signo) {
+  if (cmd === "!signo" || cmd === "!horoscopo") {
+    await sock.sendMessage(chatId, { text: textoHoroscopo() }, { quoted: msg });
+    return;
+  }
+
+  if (cmd === "!musica" || cmd === "!music" || cmd === "!play") {
+    const consulta = texto.split(" ").slice(1).join(" ").trim();
+    if (!consulta) {
       await sock.sendMessage(chatId, {
-        text: "🔮 Use *!signo <seu signo>*\nEx: *!signo leão*\n\nSignos: Áries, Touro, Gêmeos, Câncer, Leão, Virgem, Libra, Escorpião, Sagitário, Capricórnio, Aquário, Peixes",
+        text: "🎵 Use *!musica <nome ou link>*\nEx: *!musica imagine dragons believer*",
       }, { quoted: msg });
       return;
     }
-    setSigno(chatId, jid, signo);
-    await sock.sendMessage(chatId, { text: `🔮 Signo registrado: *${signo}*!\nAgora você aparece no horóscopo do *!jornal* 🌟` }, { quoted: msg });
+    await sock.sendMessage(chatId, { text: `🎶 Procurando *${consulta}*... (pode levar alguns segundos)` }, { quoted: msg });
+    try {
+      const { buffer, titulo } = await baixarMusica(consulta);
+      await sock.sendMessage(chatId, {
+        audio: buffer,
+        mimetype: "audio/mpeg",
+        fileName: `${titulo}.mp3`,
+        ptt: false,
+      }, { quoted: msg });
+      await sock.sendMessage(chatId, { text: `🎵 *${titulo}*` });
+      console.log(`🎵 Música enviada: ${titulo}`);
+    } catch (err) {
+      console.error("❌ Falha música:", err.message);
+      await sock.sendMessage(chatId, { text: `❌ ${err.message}` }, { quoted: msg });
+    }
     return;
   }
   if (cmd === "!stats" || cmd === "!estatisticas") {
@@ -584,17 +601,25 @@ async function processarComando(sock, msg, chatId, jid, nome, texto, botJid) {
   }
 
   if (cmd === "!previsao" || cmd === "!futuro") {
-    const alvo = texto.replace(cmd, "").trim() || nome;
-    const r = await previsaoFuturo(alvo);
+    const alvo = texto.replace(cmd, "").replace(/[<>@]/g, "").trim() || nome;
+    const r = await previsaoFuturo(alvo, chatId);
     await sock.sendMessage(chatId, { text: r });
     return;
   }
 
   if (cmd === "!compatibilidade" || cmd === "!compat") {
+    // Limpa <> (placeholders que a pessoa às vezes digita) e @ de menção.
+    const limpar = (s) => (s || "").replace(/[<>@]/g, "").trim();
     const partes = texto.replace(cmd, "").trim().split(/\s+e\s+|\s*\|\s*/i);
-    const n1 = partes[0]?.trim() || nome;
-    const n2 = partes[1]?.trim() || "o grupo";
-    const r = await compatibilidade(n1, n2);
+    const n1 = limpar(partes[0]) || nome;
+    const n2 = limpar(partes[1]) || "o grupo";
+    if (!partes[1]) {
+      await sock.sendMessage(chatId, {
+        text: "❤️ Use *!compatibilidade <nome1> e <nome2>*\nEx: *!compatibilidade Endy e Guilherme*",
+      }, { quoted: msg });
+      return;
+    }
+    const r = await compatibilidade(n1, n2, chatId);
     await sock.sendMessage(chatId, { text: r });
     return;
   }
@@ -677,13 +702,25 @@ async function processarComando(sock, msg, chatId, jid, nome, texto, botJid) {
 // ─── Efeitos de voz ───────────────────────────────────────────────────────────
 
 function enviarMenuEfeitos(sock, chatId, audioId, autor, citada, quotedMsg) {
-  const linhas = Object.entries(EFEITOS).map(([chave, e], i) =>
-    `  ${i + 1}. *!${chave}* — ${e.nome}`
-  ).join("\n");
+  // Agrupa por categoria pra ficar legível com muitos efeitos.
+  const grupos = {
+    "🎚️ Clássicos": ["demonio", "esquilo", "robo", "estadio", "agudo", "grave"],
+    "👴 Família":   ["vovo", "vovoh", "bebe"],
+    "🎭 Personagens": ["gigante", "alien", "fantasma", "coral", "bebado"],
+    "📡 Ambientes":  ["telefone", "radio"],
+  };
+  const blocos = Object.entries(grupos).map(([titulo, chaves]) => {
+    const linhas = chaves
+      .filter(c => EFEITOS[c])
+      .map(c => `  • *!${c}* — ${EFEITOS[c].nome}`)
+      .join("\n");
+    return `${titulo}\n${linhas}`;
+  }).join("\n\n");
+
   const texto =
     "🎙️ *Escolha um efeito respondendo este áudio com o comando:*\n\n" +
-    linhas +
-    "\n\n_Ex: responda o áudio com_ *!demonio*";
+    blocos +
+    "\n\n_Ex: responda o áudio com_ *!vovo*";
   return sock.sendMessage(chatId, { text: texto }, { quoted: quotedMsg });
 }
 
@@ -730,11 +767,12 @@ function textoMenuCompleto() {
   return (
     `🤖 *Menu do Bot*\n\n` +
 
-    `🎙️ *Efeitos de Voz*\n` +
-    `  1. Responda um áudio com *!voz*\n` +
-    `  2. Escolha o efeito nos botões\n` +
-    `  Ou direto: *!demonio* *!esquilo* *!robo*\n` +
-    `             *!estadio* *!agudo* *!grave*\n\n` +
+    `🎙️ *Efeitos de Voz* (responda um áudio com o comando)\n` +
+    `  🎚️ *!demonio* *!esquilo* *!robo* *!estadio* *!agudo* *!grave*\n` +
+    `  👴 *!vovo* *!vovoh* *!bebe*\n` +
+    `  🎭 *!gigante* *!alien* *!fantasma* *!coral* *!bebado*\n` +
+    `  📡 *!telefone* *!radio*\n` +
+    `  _Ou responda com *!voz* pra ver a lista completa_\n\n` +
 
     `🏆 *Gamificação*\n` +
     `  !ranking — top do grupo\n` +
@@ -754,7 +792,8 @@ function textoMenuCompleto() {
 
     `📰 *Grupo*\n` +
     `  !jornal — jornal completo do grupo 🗞️\n` +
-    `  !signo <signo> — entra no horóscopo do jornal 🔮\n` +
+    `  !signo — horóscopo dev do dia (12 signos) 🔮\n` +
+    `  !musica <nome ou link> — baixa a música 🎵\n` +
     `  !stats — estatísticas\n` +
     `  !sumidos — quem sumiu\n\n` +
 
@@ -765,7 +804,7 @@ function textoMenuCompleto() {
     `  axolotl, <pergunta> — também funciona\n` +
     `  !resumo — resumo do dia\n` +
     `  !resumo semana — resumo da semana\n` +
-    `  !fofoca — fofoca do grupo\n` +
+    `  !fofoca — resenha das últimas horas do grupo\n` +
     `  !previsao <nome> — previsão do futuro\n` +
     `  !compatibilidade <nome1> e <nome2>\n\n` +
 

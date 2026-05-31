@@ -4,6 +4,9 @@ import { getMensagensRecentes, getMensagensPorPeriodo, getConfig, setConfig, get
 const GROQ_KEY = process.env.GROQ_API_KEY;
 let groq = null;
 
+// Modelo maior = bem menos invencionice que o 8b, ainda rápido/grátis no Groq.
+const MODELO = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+
 function getGroq() {
   if (!GROQ_KEY) return null;
   if (!groq) groq = new Groq({ apiKey: GROQ_KEY });
@@ -52,7 +55,7 @@ function respostaTemConteudoInadequado(texto) {
   return PALAVRAS_PROIBIDAS.some(p => t.includes(p));
 }
 
-async function gerar(prompt) {
+async function gerar(prompt, { maxTokens = 320, temperatura = 0.9 } = {}) {
   const ai = getGroq();
   if (!ai) return null;
 
@@ -60,10 +63,10 @@ async function gerar(prompt) {
     for (let tentativa = 1; tentativa <= 3; tentativa++) {
       try {
         const res = await ai.chat.completions.create({
-          model: "llama-3.1-8b-instant",
+          model: MODELO,
           messages: [{ role: "user", content: prompt }],
-          max_tokens: 200,
-          temperature: 0.9,
+          max_tokens: maxTokens,
+          temperature: temperatura,
         });
         const resposta = res.choices[0]?.message?.content?.trim() || null;
 
@@ -121,8 +124,14 @@ Sua personalidade BASE:
 - Engraçado, sarcástico na medida certa, mas sempre amigável
 - Fala de forma descontraída, usa gírias brasileiras naturalmente
 - NÃO usa asteriscos para negrito, fala normalmente
-- Respostas BEM curtas e diretas (1 a 2 frases no máximo)
 - Nunca diz que é uma IA, é um membro do grupo mesmo
+- Você é técnico e sabe de verdade sobre TI, programação, carreira e tecnologia
+
+TAMANHO E PROFUNDIDADE DA RESPOSTA — adapte ao tipo de pergunta:
+- Pergunta SÉRIA, técnica ou que pede explicação (ex: "como funciona X?", "qual a diferença entre Y e Z?", "como resolvo esse erro?") → PENSE com calma e responda de forma COMPLETA, CORRETA e bem explicada. Pode usar 1 ou 2 parágrafos, exemplos, passos. NÃO resuma a ponto de ficar errado ou raso. Profundidade importa mais que brevidade aqui.
+- Conversa casual, zoeira, papo rápido → aí sim responde curto (1-2 frases) e divertido.
+- Na dúvida sobre o tipo, trate como pergunta séria e responda bem.
+- REGRA DE OURO: é melhor uma resposta certa e completa do que uma piada curta e errada. Nunca invente informação técnica; se não souber, diga que não tem certeza.
 
 REGRA PRINCIPAL — você espelha o tom de quem fala com você:
 - Se a pessoa for grossa ou zoar → rebate com sarcasmo e deboche ENGRAÇADO, mas sem ofender
@@ -214,9 +223,10 @@ ${ctxPessoas}
 
 ${remetente} disse: "${pergunta}"
 
-Responda como o Axolotl-Byte (espelhando o tom de ${remetente}):`;
+Responda como o Axolotl-Byte (espelhando o tom de ${remetente}, mas priorizando estar CERTO e completo se for pergunta séria):`;
 
-  const r = await gerar(prompt);
+  // Mais espaço e menos aleatoriedade pra perguntas: respostas completas e corretas.
+  const r = await gerar(prompt, { maxTokens: 700, temperatura: 0.7 });
   return r || "Opa, tô meio sobrecarregado agora 😵 tenta de novo em uns segundos!";
 }
 
@@ -261,23 +271,24 @@ REGRAS IMPORTANTES:
 export async function colunasJornal() {
   if (!getGroq()) return null;
 
-  const prompt = `Você é o editor do "Jornal do Grupo" de uma comunidade brasileira de profissionais de TI (devs, devops, dados, etc).
-Gere o conteúdo de HOJE para 4 colunas. Seja criativo, atual e com humor de TI.
+  const prompt = `Você é o editor-chefe do "Jornal Galera do TI" de uma comunidade brasileira de profissionais de TI (devs, devops, dados, etc).
+Gere o conteúdo de HOJE. Seja criativo, atual e com humor de TI.
 
-Responda EXATAMENTE neste formato, uma linha por coluna, sem nada além disso:
-NOTICIA: <1 tendência/tema REAL e atual do mundo dev (linguagens, frameworks, IA, cloud, carreira). NÃO invente nomes de produtos/versões que você não tem certeza que existem — prefira temas gerais e verdadeiros. 1 frase>
+Responda EXATAMENTE neste formato, uma linha por item, sem nada além disso:
+MANCHETE: <chamada de capa CURTA e marcante estilo jornal, sobre tecnologia/vida de dev, em CAIXA ALTA, máx 8 palavras>
+NOTICIA: <1 tendência/tema REAL e atual do mundo dev (linguagens, frameworks, IA, cloud, carreira). NÃO invente nomes de produtos/versões que você não tem certeza que existem — prefira temas gerais e verdadeiros. 1 a 2 frases>
 PIADA: <1 piada curta de programador/TI com punchline boa de verdade, do tipo que dev ri>
 FATO: <1 fato curioso e COMPROVADAMENTE verídico sobre tecnologia/computação/história da computação. Se não tiver certeza, escolha outro fato. 1 frase>
 DICA: <1 dica prática e correta de aprendizado pra dev (conceito, atalho, boa prática real), 1 frase>
 
-Regras: português BR, sem asteriscos, sem emojis no meio do texto, cada item com no máximo 2 frases. Não invente fatos nem produtos. Varie os temas a cada edição.`;
+Regras: português BR, sem asteriscos, sem emojis no meio do texto. Não invente fatos nem produtos. Varie os temas a cada edição.`;
 
   try {
     const ai = getGroq();
     const res = await ai.chat.completions.create({
-      model: "llama-3.1-8b-instant",
+      model: MODELO,
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 400,
+      max_tokens: 500,
       temperature: 1.0,
     });
     const txt = res.choices[0]?.message?.content?.trim() || "";
@@ -286,10 +297,11 @@ Regras: português BR, sem asteriscos, sem emojis no meio do texto, cada item co
       return m ? m[1].trim() : null;
     };
     return {
-      noticia: pegar("NOTICIA"),
-      piada:   pegar("PIADA"),
-      fato:    pegar("FATO"),
-      dica:    pegar("DICA"),
+      manchete: pegar("MANCHETE"),
+      noticia:  pegar("NOTICIA"),
+      piada:    pegar("PIADA"),
+      fato:     pegar("FATO"),
+      dica:     pegar("DICA"),
     };
   } catch (err) {
     console.error("Erro colunasJornal:", err.message);
@@ -302,62 +314,96 @@ Regras: português BR, sem asteriscos, sem emojis no meio do texto, cada item co
 export async function fofocaGrupo(chatId) {
   if (!getGroq()) return "⚠️ Groq não configurado.";
 
-  const historico = getMensagensRecentes(chatId, 50);
+  // Cobre as últimas 5 horas de conversa (cai pras últimas 60 msgs se for pouco).
+  let historico = getMensagensPorPeriodo(chatId, 5, 250);
+  if (historico.length < 5) historico = getMensagensRecentes(chatId, 60);
   if (historico.length < 5) return "🤐 Sem fofoca ainda. Conversem mais!";
 
   const texto = historico.map(h => `${h.nome}: ${h.texto || "[áudio]"}`).join("\n");
 
   const prompt = `${PERSONALIDADE_BASE}
 
-Mensagens do grupo:
+Estas são as conversas das últimas horas no grupo (ordem cronológica):
 ${texto}
 
-Crie uma fofoca engraçada baseada nas conversas acima.
+Escreva a "Coluna de Fofoca" do grupo — uma resenha divertida e ESPERTA cobrindo o que rolou nas últimas horas.
 REGRAS:
-- Cite os NOMES reais das pessoas e o que elas falaram de verdade
-- Exagere de forma cômica em cima de fatos REAIS das conversas
-- Nada genérico, use o que realmente aconteceu no grupo
-- Máximo 4 linhas, estilo revista de fofoca.`;
+- Comece com uma chamada de fofoca e liste 3 a 5 TÓPICOS do que aconteceu, em bullets
+- Cada bullet: cite NOMES reais e o que a pessoa falou/fez DE VERDADE, com um toque de humor afiado (não infantil)
+- Aponte os assuntos mais comentados, discussões, quem sumiu/apareceu, climão ou treta leve se houver
+- Baseie-se SÓ no que realmente apareceu nas mensagens — nada inventado nem genérico
+- Tom: colunista de fofoca esperto e debochado, humor maduro
+- 6 a 10 linhas no total. Use emojis pra dar ritmo.`;
 
-  const r = await gerar(prompt);
+  // Mais espaço pra cobrir vários tópicos das últimas horas.
+  const r = await gerar(prompt, { maxTokens: 600, temperatura: 0.9 });
   if (!r) return "Sem fofoca agora. Tenta de novo!";
-  return `🔥 *Fofoca do Dia*\n\n` + r;
+  return `🔥 *A Fofoca do Grupo* — últimas horas\n\n` + r;
 }
 
 // ── Previsão do futuro ────────────────────────────────────────────────────────
 
-export async function previsaoFuturo(nome) {
+export async function previsaoFuturo(nome, chatId = null) {
   if (!getGroq()) {
-    const previsoes = [
-      `🔮 Previsão para *${nome}*:\nChance de ser produtivo hoje: 3%\nChance de abrir o YouTube "só por 5 minutos": 99%`,
-      `🔮 Previsão para *${nome}*:\nVai começar uma dieta amanhã. De novo.`,
-      `🔮 Previsão para *${nome}*:\nAlguém vai te marcar em algo sem contexto às 2h da manhã.`,
-    ];
-    return previsoes[Math.floor(Math.random() * previsoes.length)];
+    return `🔮 Previsão para *${nome}*:\nO oráculo tá offline, mas algo me diz que você vai recarregar a página antes de ler isso.`;
   }
 
-  const prompt = `Crie uma previsão do futuro engraçada e criativa para "${nome}".
-Estilo: oráculo dramático mas com humor brasileiro.
-Inclua porcentagens absurdas. Máximo 4 linhas. Comece com 🔮`;
+  // Usa o jeito real da pessoa no grupo pra personalizar a previsão.
+  let contexto = "";
+  if (chatId) {
+    const ctx = getContextoPessoa(chatId, nome);
+    const falas = ctx?.msgs?.filter(m => m.texto).slice(-10).map(m => m.texto).join(" | ");
+    if (falas) contexto = `\nComo ${nome} se comporta no grupo (amostra real): ${falas}`;
+  }
 
-  const r = await gerar(prompt);
+  const prompt = `Você é um oráculo perspicaz com humor inteligente (não infantil, nada de bobagem aleatória).
+Faça uma "previsão do futuro" para *${nome}* — divertida, mas ESPERTA e plausível, como se realmente conhecesse a pessoa.
+${contexto || "(sem histórico — faça algo genérico mas com graça e bom senso)"}
+
+Regras:
+- Baseie a previsão no jeito real da pessoa (se houver amostra): manias, assuntos que curte, como escreve
+- Humor observador e afiado, tom de quem alfineta com carinho — nada de "vai dançar salsa" ou absurdo sem sentido
+- Pode incluir 1 porcentagem espirituosa (mas que faça sentido com a pessoa)
+- 3 a 4 linhas. Comece com 🔮 e o nome.`;
+
+  const r = await gerar(prompt, { maxTokens: 300, temperatura: 0.85 });
   return r || `🔮 O oráculo tá de folga. Tenta de novo, ${nome}!`;
 }
 
 // ── Compatibilidade ───────────────────────────────────────────────────────────
 
-export async function compatibilidade(nome1, nome2) {
-  const pct = Math.floor(Math.random() * 60) + 40;
+export async function compatibilidade(nome1, nome2, chatId = null) {
+  const pct = Math.floor(Math.random() * 56) + 40; // 40–95%
   if (!getGroq()) {
-    return `❤️ *Compatibilidade*\n\n${nome1} 🤝 ${nome2}\n\n*${pct}%*\n\nMotivo: O algoritmo não quer se comprometer.`;
+    return `💞 *Compatibilidade*\n\n${nome1} 🤝 ${nome2}\n\n*${pct}%*`;
   }
 
-  const prompt = `Analise a compatibilidade entre "${nome1}" e "${nome2}" de forma engraçada.
-Dê uma porcentagem (use ${pct}%) e um motivo criativo e absurdo.
-Máximo 4 linhas. Use emoji ❤️`;
+  // Puxa o contexto real das duas pessoas (como escrevem, sobre o que falam),
+  // pra a análise ser baseada no comportamento real e não em invenção.
+  let contexto = "";
+  if (chatId) {
+    const montar = (nome) => {
+      const ctx = getContextoPessoa(chatId, nome);
+      if (!ctx?.msgs?.length) return "";
+      const falas = ctx.msgs.filter(m => m.texto).slice(-12).map(m => m.texto).join(" | ");
+      return falas ? `\nComo ${nome} se comunica no grupo (amostra real): ${falas}` : "";
+    };
+    contexto = montar(nome1) + montar(nome2);
+  }
+
+  const prompt = `Você é um analista perspicaz de relações interpessoais com bom humor inteligente (não infantil).
+Analise a compatibilidade entre *${nome1}* e *${nome2}* — pode ser amizade, parceria de trabalho ou afinidade geral.
+${contexto || "(sem histórico das pessoas — baseie-se de forma genérica mas plausível)"}
+
+Escreva uma análise CURTA porém DENSA, em português BR:
+- Use a porcentagem *${pct}%*
+- Aponte 1 ponto de afinidade real e 1 ponto de atrito/diferença, com base no jeito que cada um se comunica (se houver amostra)
+- Tom: observador, afiado, com humor sutil e maduro — nada de bobagem aleatória tipo "dançar salsa"
+- Seja específico e plausível, como se realmente conhecesse as duas pessoas
+- 3 a 5 linhas. Comece com 💞 e o placar.`;
 
   const r = await gerar(prompt);
-  return r || `❤️ ${nome1} + ${nome2} = ${pct}% (o resto é mistério do universo)`;
+  return r || `💞 ${nome1} + ${nome2} = ${pct}%`;
 }
 
 // ── Resposta em modo livre ────────────────────────────────────────────────────

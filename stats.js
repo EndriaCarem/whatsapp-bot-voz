@@ -1,4 +1,4 @@
-import { getStatsGrupo, getRanking, getSignosGrupo } from "./db.js";
+import { getStatsGrupo, getRanking } from "./db.js";
 import { colunasJornal } from "./ia.js";
 
 const SEP = "━".repeat(20);
@@ -17,21 +17,70 @@ const VIBES_TI = [
   "documentação que você escreveu vai te salvar",
   "dia de produtividade alta, aproveita a maré",
   "respira antes de responder aquele e-mail",
+  "hoje o CSS finalmente vai centralizar",
+  "aquele teste que tava vermelho vai passar",
+  "alguém vai elogiar seu código (aproveita)",
+  "evite responder 'funciona na minha máquina'",
+  "dia de fechar abas do navegador e respirar",
+  "o deploy vai pedir pra você revisar duas vezes",
+  "boa hora pra automatizar aquela tarefa chata",
+  "cuidado: reunião que podia ser um e-mail à vista",
+  "seu rubber duck vai resolver o bug de novo",
+  "dia ótimo pra apagar código morto sem dó",
+  "vai surgir uma ideia boa no banho, anota",
+  "hoje o Stack Overflow tá do seu lado",
 ];
 
+// Ordem fixa dos 12 signos (com emoji e datas) — pro horóscopo completo.
+const SIGNOS_INFO = [
+  { nome: "Áries",       emoji: "♈", datas: "21/03–19/04" },
+  { nome: "Touro",       emoji: "♉", datas: "20/04–20/05" },
+  { nome: "Gêmeos",      emoji: "♊", datas: "21/05–20/06" },
+  { nome: "Câncer",      emoji: "♋", datas: "21/06–22/07" },
+  { nome: "Leão",        emoji: "♌", datas: "23/07–22/08" },
+  { nome: "Virgem",      emoji: "♍", datas: "23/08–22/09" },
+  { nome: "Libra",       emoji: "♎", datas: "23/09–22/10" },
+  { nome: "Escorpião",   emoji: "♏", datas: "23/10–21/11" },
+  { nome: "Sagitário",   emoji: "♐", datas: "22/11–21/12" },
+  { nome: "Capricórnio", emoji: "♑", datas: "22/12–19/01" },
+  { nome: "Aquário",     emoji: "♒", datas: "20/01–18/02" },
+  { nome: "Peixes",      emoji: "♓", datas: "19/02–20/03" },
+];
+
+function diaAtual() {
+  return Math.floor(Date.now() / 86400000);
+}
+
 function horoscopoDoDia(signo) {
-  // determinístico por (signo + dia): todo mundo do mesmo signo vê a mesma vibe no dia
-  const dia = Math.floor(Date.now() / 86400000);
-  let h = dia;
-  for (const c of signo) h += c.charCodeAt(0);
+  // determinístico por (signo + dia): todo mundo do mesmo signo vê a mesma vibe no dia.
+  // Usa o índice do signo pra espalhar melhor e reduzir repetições no mesmo dia.
+  const idx = SIGNOS_INFO.findIndex(s => s.nome === signo);
+  const base = idx >= 0 ? idx : [...signo].reduce((a, c) => a + c.charCodeAt(0), 0);
+  const h = diaAtual() * 7 + base * 13;
   return VIBES_TI[Math.abs(h) % VIBES_TI.length];
 }
 
-const EMOJI_SIGNO = {
-  "áries": "♈", "touro": "♉", "gêmeos": "♊", "câncer": "♋",
-  "leão": "♌", "virgem": "♍", "libra": "♎", "escorpião": "♏",
-  "sagitário": "♐", "capricórnio": "♑", "aquário": "♒", "peixes": "♓",
-};
+// Horóscopo completo dos 12 signos (comando !signo) — não precisa cadastro.
+export function textoHoroscopo() {
+  const data = new Date().toLocaleDateString("pt-BR", {
+    weekday: "long", day: "2-digit", month: "long",
+  });
+  const linhas = SIGNOS_INFO.map(s =>
+    `${s.emoji} *${s.nome}* _(${s.datas})_\n   ↳ ${horoscopoDoDia(s.nome)}`
+  ).join("\n\n");
+  return (
+    `🔮 *HORÓSCOPO DEV DO DIA*\n` +
+    `_${data}_\n` +
+    `${SEP}\n\n${linhas}\n\n` +
+    `${SEP}\n_As estrelas (e o compilador) raramente erram 😉_`
+  );
+}
+
+// Um "signo do dia" rotativo (pro jornal) — muda a cada dia.
+function signoDoDia() {
+  const s = SIGNOS_INFO[diaAtual() % SIGNOS_INFO.length];
+  return `${s.emoji} *${s.nome}* — ${horoscopoDoDia(s.nome)}`;
+}
 
 export async function textoJornal(chatId) {
   const s = getStatsGrupo(chatId);
@@ -49,39 +98,60 @@ export async function textoJornal(chatId) {
       }).join("\n")
     : "  ✅ Ninguém sumido!";
 
-  // ── Horóscopo de TI: só dos signos que existem no grupo ──
-  const signos = getSignosGrupo(chatId);
-  const horoscopoTexto = signos.length
-    ? signos.slice(0, 6).map(row => {
-        const nome = row.signo;
-        const emoji = EMOJI_SIGNO[nome.toLowerCase()] || "🔮";
-        return `  ${emoji} *${nome}* (${row.total}): ${horoscopoDoDia(nome)}`;
-      }).join("\n")
-    : "  Ninguém cadastrou o signo ainda — use *!signo <seu signo>*";
+  // ── Signo do Dia (rotativo) — horóscopo completo no comando !signo ──
+  const horoscopoTexto = `  ${signoDoDia()}\n  _Veja os 12 signos com *!signo*_`;
 
-  // ── Colunas criativas (IA): notícia, piada, fato, dica ──
+  // ── Colunas criativas (IA): manchete, notícia, piada, fato, dica ──
   const c = await colunasJornal();
 
-  let txt =
-    `🗞️ *JORNAL DA TABERNA* 🗞️\n` +
-    `_a edição mais quente da galera do TI_\n` +
-    `${SEP}\n\n` +
-    `📊 *PLACAR DA SEMANA*\n` +
-    `📬 Hoje: *${s.hoje}* msgs | 📦 Semana: *${s.semana}* msgs\n\n` +
-    `🏆 *Mais ativos:*\n${topTexto}\n` +
-    (audios ? `\n🎙️ *Rei dos áudios:* ${audios.nome} (${audios.n})\n` : "") +
-    `\n👻 *Sumidos da semana:*\n${sumidosTexto}\n\n` +
-    `${SEP}\n\n` +
-    `🔮 *HORÓSCOPO DEV DO DIA*\n${horoscopoTexto}\n\n`;
+  const data = new Date().toLocaleDateString("pt-BR", {
+    weekday: "long", day: "2-digit", month: "long", year: "numeric",
+  });
 
-  if (c) {
-    if (c.noticia) txt += `${SEP}\n\n💡 *RADAR TECH*\n  ${c.noticia}\n\n`;
-    if (c.dica)    txt += `📚 *APRENDA HOJE*\n  ${c.dica}\n\n`;
-    if (c.fato)    txt += `🤓 *VOCÊ SABIA?*\n  ${c.fato}\n\n`;
-    if (c.piada)   txt += `😂 *PIADA DO DIA*\n  ${c.piada}\n\n`;
+  // ── Cabeçalho do jornal ──
+  let txt =
+    `╔══════════════════╗\n` +
+    `    🗞️ *JORNAL GALERA DO TI* 🗞️\n` +
+    `╚══════════════════╝\n` +
+    `_📅 ${data} • Edição Diária_\n\n`;
+
+  // ── Manchete de capa (destaque) ──
+  if (c?.manchete) {
+    txt +=
+      `📰 *MANCHETE*\n` +
+      `🔴 *${c.manchete.toUpperCase()}*\n\n`;
   }
 
-  txt += `${SEP}\n_Cadastre seu signo com *!signo <signo>* pra aparecer no horóscopo!_`;
+  // ── Placar do grupo ──
+  txt +=
+    `${SEP}\n` +
+    `📊 *PLACAR DA SEMANA*\n` +
+    `${SEP}\n` +
+    `📬 Hoje: *${s.hoje}* msgs  •  📦 Semana: *${s.semana}* msgs\n\n` +
+    `🏆 _Mais ativos:_\n${topTexto}\n` +
+    (audios ? `\n🎙️ _Rei dos áudios:_ *${audios.nome}* (${audios.n})\n` : "") +
+    `\n👻 _Sumidos da semana:_\n${sumidosTexto}\n\n`;
+
+  // ── Signo do dia ──
+  txt +=
+    `${SEP}\n` +
+    `🔮 *SIGNO DO DIA*\n` +
+    `${SEP}\n${horoscopoTexto}\n\n`;
+
+  // ── Colunas da IA ──
+  if (c) {
+    if (c.noticia) txt += `${SEP}\n💡 *RADAR TECH*\n${SEP}\n${c.noticia}\n\n`;
+    if (c.dica)    txt += `${SEP}\n📚 *APRENDA HOJE*\n${SEP}\n${c.dica}\n\n`;
+    if (c.fato)    txt += `${SEP}\n🤓 *VOCÊ SABIA?*\n${SEP}\n${c.fato}\n\n`;
+    if (c.piada)   txt += `${SEP}\n😂 *PIADA DO DIA*\n${SEP}\n${c.piada}\n\n`;
+  }
+
+  // ── Rodapé ──
+  txt +=
+    `╔══════════════════╗\n` +
+    `_✨ Horóscopo completo:_ *!signo*\n` +
+    `_🤖 Edição por Axolotl-Byte_\n` +
+    `╚══════════════════╝`;
   return txt;
 }
 

@@ -1,4 +1,4 @@
-import { getRanking, getUsuario, getDiasNoGrupo, isAdmin } from "./db.js";
+import { getRanking, getUsuario, getDiasNoGrupo, isAdmin, xpTotal } from "./db.js";
 
 // ── Cargos automáticos com tema de TI ────────────────────────────────────────
 // Progressão baseada em dias no grupo + nível de XP.
@@ -68,27 +68,32 @@ export function textoRanking(chatId, adminsSet = null) {
 
   const linhaUsuario = (u, pos) => {
     const admin  = ehAdminGrupo(u.jid, adminsSet);
+    // Cargo vem do nível TOTAL (senioridade permanente).
     const cargo  = getCargo(chatId, u.jid || "", u.nivel, admin);
     const area   = u.area_ti      ? ` • ${u.area_ti}`       : "";
     const custom = u.cargo_custom ? ` [${u.cargo_custom}]`  : "";
-    // XP total acumulado (esforço real), não o residual do nível atual.
-    return `${pos} *${u.nome}*${custom} — ${cargo.emoji} ${cargo.titulo}${area} | ${u.xpTotal} XP`;
+    // O número exibido é o XP DO MÊS (a competição da temporada).
+    return `${pos} *${u.nome}*${custom} — ${cargo.emoji} ${cargo.titulo}${area} | ${u.xp_mes} XP`;
   };
 
   const medalhas = ["🥇", "🥈", "🥉"];
   let txt = "🏆 *Ranking do Grupo*\n";
 
+  // ── Admins primeiro (seção separada, não competem com os membros) ──
+  if (admins.length) {
+    txt += "\n👑 *Staff (Admins)*\n";
+    txt += admins.map(u => linhaUsuario(u, "👑")).join("\n");
+    txt += "\n\n━━━━━━━━━━━━━━━━━━\n🙌 *Membros*\n";
+  }
+
   // ── Membros ──
   const topMembros = membros.slice(0, 10);
-  txt += "\n" + topMembros
+  txt += (admins.length ? "" : "\n") + topMembros
     .map((u, i) => linhaUsuario(u, medalhas[i] || `${i + 1}.`))
     .join("\n");
 
-  // ── Admins (seção separada, não competem com os membros) ──
-  if (admins.length) {
-    txt += "\n\n━━━━━━━━━━━━━━━━━━\n👑 *Staff (Admins)*\n";
-    txt += admins.map(u => linhaUsuario(u, "👑")).join("\n");
-  }
+  // Nota da temporada: o ranking (XP do mês) zera; cargo/senioridade não.
+  txt += "\n\n━━━━━━━━━━━━━━━━━━\n_🏁 Temporada mensal: o XP do ranking zera todo mês. Seu cargo/senioridade não zera._";
 
   return txt;
 }
@@ -102,11 +107,13 @@ export function textoPerfil(chatId, jid) {
   const area   = u.area_ti    ? `\n├ Especialidade: *${u.area_ti}*`   : "";
   const custom = u.cargo_custom ? `\n├ Cargo: *[${u.cargo_custom}]*`  : "";
 
+  const total = xpTotal(u.nivel, u.xp);
   return (
     `${cargo.emoji} *${u.nome}*\n` +
-    `├ Nível: *${cargo.titulo}* (${dias} dias no grupo)` +
+    `├ Cargo: *${cargo.titulo}* (${dias} dias no grupo)` +
     custom + area + "\n" +
-    `├ XP: *${u.xp}* | Nível: *${u.nivel}*\n` +
+    `├ Nível: *${u.nivel}* | XP total: *${total}*\n` +
+    `├ 🏁 XP da temporada: *${u.xp_mes}*\n` +
     `├ Moedas: 💰 *${u.moedas}*\n` +
     `└ Msgs: *${u.msgs}* | Áudios: *${u.audios}*`
   );
