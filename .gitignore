@@ -19,3 +19,4 @@ teste-saidas/
 
 # macOS
 .DS_Store
+.vercel

@@ -1,7 +1,6 @@
 {
   "buildCommand": "cd web3d && npm install",
   "outputDirectory": "web3d",
-  "public": false,
   "rewrites": [
     {
       "source": "/(.*)",
