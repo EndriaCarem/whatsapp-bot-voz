@@ -1,13 +1,19 @@
 {
-  "buildCommand": "npm install",
-  "outputDirectory": ".",
-  "env": {
-    "NODE_ENV": "production"
-  },
+  "buildCommand": "cd .. && npm install",
+  "outputDirectory": "web3d",
+  "public": true,
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/advanced.html",
+      "destination": "/advanced.html"
+    },
+    {
+      "source": "/index.html",
       "destination": "/index.html"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/advanced.html"
     }
   ],
   "headers": [
@@ -20,7 +26,15 @@
         },
         {
           "key": "Access-Control-Allow-Methods",
-          "value": "GET, POST, OPTIONS"
+          "value": "GET, POST, PUT, DELETE, OPTIONS"
+        },
+        {
+          "key": "Access-Control-Allow-Headers",
+          "value": "Content-Type"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=3600"
         }
       ]
     }

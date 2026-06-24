@@ -332,9 +332,9 @@
         // ========== CONFIG ==========
         // Detecta ambiente (produção vs local)
         const isDev = window.location.hostname === 'localhost';
-        const WS_URL = isDev
-            ? 'ws://localhost:3001'
-            : `wss://${window.location.hostname}:${window.location.port || 443}`;
+        const API_URL = isDev
+            ? 'http://localhost:3001/api/command'
+            : '/api/command';
 
         const canvas = document.getElementById('canvas');
         const scene = new THREE.Scene();
@@ -550,8 +550,8 @@
         const sceneSelector = document.getElementById('sceneSelector');
         const sceneInfo = document.getElementById('sceneInfo');
 
-        // ========== CONNECTION CONFIG ==========
-        console.log(`🌐 Conectando ao: ${WS_URL}`);
+        // ========== API CONFIG ==========
+        console.log(`🌐 API URL: ${API_URL}`);
 
         Object.entries(scenes).forEach(([key, data]) => {
             const btn = document.createElement('button');
@@ -561,6 +561,22 @@
             btn.onclick = () => loadScene(key);
             sceneSelector.appendChild(btn);
         });
+
+        async function sendCommand(commandText) {
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command: commandText })
+                });
+
+                const data = await response.json();
+                return data.content;
+            } catch (error) {
+                console.error('Erro ao enviar comando:', error);
+                return '❌ Erro ao conectar com o servidor';
+            }
+        }
 
         function showChatBubble(text, type = 'bot') {
             chatBubble.textContent = text;
@@ -582,47 +598,43 @@
             sceneInfo.innerHTML = `<strong>${scene.name}</strong><br>Pressione espaço para girar câmera`;
         }
 
-        function handleCommand(input) {
+        const sceneMap = {
+            '!ia': 'sala',
+            '!musica': 'estudio',
+            '!ranking': 'sala',
+            '!perfil': 'sala',
+            '!jornal': 'sala',
+            '!stats': 'sala',
+            '!voz': 'estudio',
+            '!sumidos': 'sala'
+        };
+
+        async function handleCommand(input) {
             const cmd = input.toLowerCase().trim();
+            showChatBubble(input, 'user');
 
-            const responses = {
-                '!ia': { text: 'Processando sua pergunta com IA... 🧠', scene: 'sala' },
-                '!musica': { text: 'Reproduzindo música... 🎵', scene: 'estudio', music: true },
-                '!ranking': { text: 'Top 5: 1° EndriaCarem | 2° Dev Master | 3° Code Ninja', scene: 'sala' },
-                '!perfil': { text: 'Perfil: Nível 25 | XP: 2500 | Rank: 12º', scene: 'sala' },
-                '!jornal': { text: '15 mensagens | 3 enquetes | Top do dia: EndriaCarem 850 XP', scene: 'sala' },
-                '!stats': { text: '📊 Membros: 24 | Mensagens: 12.450 | Uptime: 45 dias', scene: 'sala' },
-                '!voz': { text: '🎙️ Efeitos: !demonio !esquilo !robo !estadio !agudo !grave', scene: 'estudio' },
-                '!sumidos': { text: '🚫 João (12 dias) | Maria (9 dias) | Pedro (8 dias)', scene: 'sala' },
-                '!ajuda': { text: '❓ Comandos: !ia !musica !ranking !perfil !jornal !stats !voz !sumidos', scene: 'sala' }
-            };
-
-            for (const [key, response] of Object.entries(responses)) {
-                if (cmd.startsWith(key)) {
-                    if (response.scene !== currentScene) {
-                        loadScene(response.scene);
-                    }
-                    if (response.music) {
-                        showMusicPlayer();
-                    }
-                    showChatBubble(response.text);
-                    return;
+            // Trocar de cena se necessário
+            for (const [key, scene] of Object.entries(sceneMap)) {
+                if (cmd.startsWith(key) && scene !== currentScene) {
+                    loadScene(scene);
+                    break;
                 }
             }
 
-            if (cmd.startsWith('!ia ')) {
-                showChatBubble(`Respondendo: "${cmd.substring(4)}" 🤖`);
-                return;
+            // Se for comando de música, mostrar player
+            if (cmd.startsWith('!musica')) {
+                showMusicPlayer();
             }
 
-            showChatBubble('❓ Comando desconhecido. Digite !ajuda');
+            // Enviar comando para API e receber resposta
+            const response = await sendCommand(input);
+            showChatBubble(response, 'bot');
         }
 
-        sendBtn.addEventListener('click', () => {
+        sendBtn.addEventListener('click', async () => {
             const input = commandInput.value.trim();
             if (input) {
-                handleCommand(input);
-                showChatBubble(input, 'user');
+                await handleCommand(input);
                 commandInput.value = '';
             }
         });
