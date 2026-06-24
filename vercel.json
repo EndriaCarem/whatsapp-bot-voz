@@ -3,12 +3,12 @@
   "outputDirectory": "web3d",
   "rewrites": [
     {
-      "source": "/advanced",
-      "destination": "/advanced.html"
+      "source": "/simples",
+      "destination": "/index.html"
     },
     {
       "source": "/",
-      "destination": "/index.html"
+      "destination": "/advanced.html"
     }
   ],
   "headers": [
