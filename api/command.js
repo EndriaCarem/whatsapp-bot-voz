@@ -1,34 +1,49 @@
 // API Endpoint para comandos do bot
 // Vercel Serverless Function
 
-export default function handler(req, res) {
+module.exports = function handler(req, res) {
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
     }
 
+    if (req.method === 'GET') {
+        return res.status(200).json({
+            status: 'ok',
+            message: 'API Axolotl-Byte está funcionando!'
+        });
+    }
+
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Método não permitido' });
     }
 
-    const { command } = req.body;
+    try {
+        const { command } = req.body;
 
-    if (!command) {
-        return res.status(400).json({ error: 'Comando não fornecido' });
+        if (!command) {
+            return res.status(400).json({ error: 'Comando não fornecido' });
+        }
+
+        const response = handleCommand(command);
+
+        return res.status(200).json({
+            type: 'response',
+            content: response,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('Erro:', error);
+        return res.status(500).json({
+            error: 'Erro ao processar comando',
+            message: error.message
+        });
     }
-
-    const response = handleCommand(command);
-
-    return res.status(200).json({
-        type: 'response',
-        content: response,
-        timestamp: new Date().toISOString()
-    });
-}
+};
 
 function handleCommand(input) {
     const cmd = input.toLowerCase().trim();
