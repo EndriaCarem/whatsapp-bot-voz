@@ -91,7 +91,21 @@ Os dados são isolados por grupo — o bot funciona em vários grupos simultanea
 
 ---
 
-## 🚀 Quick Start (3 linhas)
+## 🚀 Deploy Agora!
+
+### 🌐 Online em 1 minuto:
+```
+👉 https://vercel.com/new
+   Selecione: EndriaCarem/whatsapp-bot-voz
+   Clique: Import
+   ✨ Pronto! Interface online!
+```
+
+**Mais informações:** [DEPLOY_AGORA.md](DEPLOY_AGORA.md)
+
+---
+
+## 💻 Testar Localmente
 
 ```bash
 cd web3d && npm install && npm start
