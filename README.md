@@ -4,7 +4,30 @@
 
 **Bot de WhatsApp para grupos** — efeitos de voz, IA conversacional, gamificação e estatísticas.
 
-Conecta direto no WhatsApp via Baileys, com painel web para leitura do QR code.
+Conecta direto no WhatsApp via Baileys, com interface web 3D futurista para testar comandos.
+
+![Axolotl-Byte 3D](https://img.shields.io/badge/Interface-3D%20Futurista-blueviolet?style=for-the-badge&logo=react)
+![WebSocket](https://img.shields.io/badge/Real--Time-WebSocket-brightgreen?style=for-the-badge)
+![Node.js](https://img.shields.io/badge/Node.js-20+-green?style=for-the-badge)
+![Three.js](https://img.shields.io/badge/Three.js-WebGL-black?style=for-the-badge)
+
+---
+
+---
+
+<div align="center">
+
+![Axolotl 3D Interface](web3d/preview.svg)
+
+### 🎮 [Demo Interativa 3D →](http://localhost:3001/advanced.html)
+
+**Teste agora:** 
+```bash
+cd web3d && npm install && npm start
+```
+Depois abra: **http://localhost:3001/advanced.html**
+
+</div>
 
 </div>
 
@@ -92,7 +115,7 @@ GEMINI_API_KEY=sua-chave-aqui
 
 > Sem a chave o bot funciona normalmente, apenas sem as funções de IA.
 
-### Iniciar
+### Iniciar - Modo Bot
 
 ```bash
 npm start
@@ -100,20 +123,38 @@ npm start
 
 Abra **http://localhost:3000**, escaneie o QR code (WhatsApp → Aparelhos conectados → Conectar aparelho) e pronto.
 
+### Iniciar - Interface 3D (Modo Desenvolvimento)
+
+```bash
+cd web3d
+npm install
+npm start
+```
+
+**Interfaces disponíveis:**
+- **Chat Simples**: http://localhost:3001/index.html
+- **3D Futurista**: http://localhost:3001/advanced.html ⭐
+
+Teste os comandos em 3D com avatares animados, múltiplas cenas e reprodutor de música! 🚀
+
 ---
 
 ## 📁 Estrutura
 
 ```
 whatsapp-bot-voz/
-├── index.js        # Conexão Baileys + roteamento de comandos
-├── efeitos.js      # Catálogo de efeitos e processamento FFmpeg
-├── ia.js           # Integração com Gemini (NPC, resumo, fofoca)
-├── xp.js           # Sistema de XP, níveis e ranking
-├── enquetes.js     # Enquetes e votações
-├── stats.js        # Jornal e estatísticas do grupo
-├── db.js           # Camada de dados (SQLite)
-└── front/          # Painel web (React + Vite)
+├── index.js              # Conexão Baileys + roteamento de comandos
+├── efeitos.js            # Catálogo de efeitos e processamento FFmpeg
+├── ia.js                 # Integração com Gemini (NPC, resumo, fofoca)
+├── xp.js                 # Sistema de XP, níveis e ranking
+├── enquetes.js           # Enquetes e votações
+├── stats.js              # Jornal e estatísticas do grupo
+├── db.js                 # Camada de dados (SQLite)
+├── front/                # Painel web (React + Vite) — QR Code
+└── web3d/                # Interface 3D Futurista
+    ├── index.html        # UI interativa com avatares animados
+    ├── server.js         # WebSocket server (Node.js)
+    └── package.json      # Dependências do servidor 3D
 ```
 
 ---
@@ -134,5 +175,18 @@ desde que mantenha os créditos de autoria. Veja o arquivo [LICENSE](LICENSE) pa
 ---
 
 <div align="center">
-  Feito por <a href="https://github.com/EndriaCarem">EndriaCarem</a>
+
+### 🎬 Showcase
+
+**Interface 3D com três cenas dinâmicas:**
+1. Sala de Chat — Ambiente conversacional minimalista
+2. Estúdio de Música — Reprodutor com visualizador de áudio
+3. Cyberspace — Cenário futurista com grid de neon
+
+**Tudo rodando no navegador, sem instalações extras!**
+
+---
+
+Desenvolvido por <a href="https://github.com/EndriaCarem">EndriaCarem</a>
+
 </div>

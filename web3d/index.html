@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Axolotl-Byte 3D Interface</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+            color: #fff;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 20px;
+            padding: 20px;
+            height: 100vh;
+        }
+
+        .panel {
+            background: rgba(30, 20, 60, 0.8);
+            border: 2px solid #00ffff;
+            border-radius: 10px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.3);
+            backdrop-filter: blur(10px);
+        }
+
+        .avatar-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+            border-radius: 8px;
+            background: radial-gradient(circle at 30% 30%, rgba(0, 255, 255, 0.1), transparent);
+        }
+
+        .avatar {
+            width: 200px;
+            height: 200px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 80px;
+            animation: float 3s ease-in-out infinite;
+            text-shadow: 0 0 30px currentColor;
+            filter: drop-shadow(0 0 20px currentColor);
+        }
+
+        .avatar.user {
+            color: #00ffff;
+            border: 3px solid #00ffff;
+        }
+
+        .avatar.bot {
+            color: #ff00ff;
+            border: 3px solid #ff00ff;
+        }
+
+        .avatar.speaking {
+            animation: pulse 0.5s ease-in-out;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-20px); }
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.15); }
+        }
+
+        .center-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            background: rgba(15, 10, 30, 0.5);
+            border-radius: 8px;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .message {
+            padding: 10px 15px;
+            border-radius: 8px;
+            max-width: 90%;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        .message.user {
+            background: rgba(0, 255, 255, 0.2);
+            border-left: 3px solid #00ffff;
+            align-self: flex-end;
+            margin-left: 10%;
+        }
+
+        .message.bot {
+            background: rgba(255, 0, 255, 0.2);
+            border-left: 3px solid #ff00ff;
+            align-self: flex-start;
+            margin-right: 10%;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #00ffff;
+            background: rgba(15, 10, 30, 0.8);
+            color: #00ffff;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+            border-color: #00ffff;
+        }
+
+        input[type="text"]::placeholder {
+            color: rgba(0, 255, 255, 0.5);
+        }
+
+        button {
+            padding: 12px 24px;
+            border: 2px solid #00ffff;
+            background: transparent;
+            color: #00ffff;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            font-size: 12px;
+        }
+
+        button:hover {
+            background: rgba(0, 255, 255, 0.2);
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+            transform: scale(1.05);
+        }
+
+        button:active {
+            transform: scale(0.95);
+        }
+
+        .commands-list {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .command-btn {
+            padding: 8px 12px;
+            font-size: 11px;
+            border-color: #00ffff;
+            color: #00ffff;
+            text-align: left;
+        }
+
+        .command-btn:hover {
+            background: rgba(0, 255, 255, 0.15);
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.4);
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            background: rgba(255, 0, 255, 0.1);
+            border-radius: 6px;
+            font-size: 12px;
+            border-left: 3px solid #ff00ff;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #ff00ff;
+            animation: blink 1s infinite;
+        }
+
+        .status-dot.connected {
+            background: #00ff00;
+            animation: none;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .title {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            background: linear-gradient(135deg, #00ffff, #ff00ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: rgba(0, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(0, 255, 255, 0.4);
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(0, 255, 255, 0.7);
+        }
+
+        .loading {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #00ffff;
+            animation: loading 0.6s infinite;
+        }
+
+        @keyframes loading {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .error {
+            background: rgba(255, 0, 0, 0.2);
+            border-left-color: #ff0000;
+            color: #ff6b6b;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Left Panel: User Avatar -->
+        <div class="panel">
+            <div class="title">Você</div>
+            <div class="avatar-container">
+                <div class="avatar user">👤</div>
+            </div>
+            <div style="margin-top: 15px; font-size: 12px; opacity: 0.8;">
+                <p><strong>Status:</strong> Online</p>
+                <p style="margin-top: 5px;"><strong>XP:</strong> <span id="userXp">0</span></p>
+            </div>
+        </div>
+
+        <!-- Center Panel: Chat -->
+        <div class="panel center-panel">
+            <div class="title">Chat</div>
+            <div class="chat-container" id="chatContainer"></div>
+            <div class="input-group">
+                <input
+                    type="text"
+                    id="messageInput"
+                    placeholder="Digite um comando ou mensagem..."
+                    autocomplete="off"
+                >
+                <button id="sendBtn">Enviar</button>
+            </div>
+            <div class="status" id="status">
+                <div class="status-dot"></div>
+                <span id="statusText">Conectando...</span>
+            </div>
+        </div>
+
+        <!-- Right Panel: Bot & Commands -->
+        <div class="panel">
+            <div class="title">Bot Axolotl</div>
+            <div class="avatar-container">
+                <div class="avatar bot">🤖</div>
+            </div>
+            <div style="flex: 1; margin-top: 15px; overflow-y: auto;">
+                <p style="font-size: 11px; font-weight: bold; margin-bottom: 10px; opacity: 0.8;">COMANDOS RÁPIDOS:</p>
+                <div class="commands-list" id="commandsList"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'ws://localhost:3001';
+        let ws = null;
+        let isConnected = false;
+
+        const commands = [
+            { name: '!ia Olá', desc: 'Chat com IA' },
+            { name: '!ranking', desc: 'Ver ranking' },
+            { name: '!perfil', desc: 'Seu perfil' },
+            { name: '!jornal', desc: 'Resumo do grupo' },
+            { name: '!stats', desc: 'Estatísticas' },
+            { name: '!voz', desc: 'Efeitos de voz' },
+            { name: '!enquete Pergunta? Op1|Op2', desc: 'Criar enquete' },
+            { name: '!sumidos', desc: 'Inativos' }
+        ];
+
+        const chatContainer = document.getElementById('chatContainer');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const commandsList = document.getElementById('commandsList');
+        const status = document.getElementById('status');
+        const statusText = document.getElementById('statusText');
+        const statusDot = document.querySelector('.status-dot');
+
+        // Load commands
+        commands.forEach(cmd => {
+            const btn = document.createElement('button');
+            btn.className = 'command-btn';
+            btn.innerHTML = `<strong>${cmd.name}</strong><br><small>${cmd.desc}</small>`;
+            btn.style.height = 'auto';
+            btn.style.whiteSpace = 'normal';
+            btn.addEventListener('click', () => {
+                messageInput.value = cmd.name;
+                messageInput.focus();
+            });
+            commandsList.appendChild(btn);
+        });
+
+        function connect() {
+            try {
+                ws = new WebSocket(API_URL);
+
+                ws.onopen = () => {
+                    isConnected = true;
+                    updateStatus('Conectado', true);
+                    console.log('WebSocket conectado');
+                };
+
+                ws.onmessage = (event) => {
+                    const message = JSON.parse(event.data);
+                    handleMessage(message);
+                };
+
+                ws.onerror = (error) => {
+                    console.error('WebSocket erro:', error);
+                    updateStatus('Erro na conexão', false);
+                };
+
+                ws.onclose = () => {
+                    isConnected = false;
+                    updateStatus('Desconectado', false);
+                    setTimeout(connect, 3000);
+                };
+            } catch (error) {
+                console.error('Conexão falhou:', error);
+                updateStatus('Falha na conexão', false);
+                setTimeout(connect, 3000);
+            }
+        }
+
+        function updateStatus(text, connected) {
+            statusText.textContent = text;
+            statusDot.className = connected ? 'status-dot connected' : 'status-dot';
+        }
+
+        function addMessage(content, sender) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${sender}`;
+            msgDiv.textContent = content;
+            chatContainer.appendChild(msgDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function handleMessage(data) {
+            if (data.type === 'response') {
+                addMessage(data.content, 'bot');
+                animateAvatar('bot');
+            } else if (data.type === 'error') {
+                const msgDiv = document.createElement('div');
+                msgDiv.className = 'message bot error';
+                msgDiv.textContent = '⚠️ ' + data.content;
+                chatContainer.appendChild(msgDiv);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            } else if (data.type === 'xp') {
+                document.getElementById('userXp').textContent = data.xp;
+            }
+        }
+
+        function animateAvatar(type) {
+            const avatar = document.querySelector(`.avatar.${type}`);
+            avatar.classList.add('speaking');
+            setTimeout(() => avatar.classList.remove('speaking'), 500);
+        }
+
+        function sendMessage() {
+            const content = messageInput.value.trim();
+            if (!content) return;
+
+            if (!isConnected) {
+                addMessage('❌ Não conectado ao servidor', 'bot');
+                return;
+            }
+
+            addMessage(content, 'user');
+            animateAvatar('user');
+
+            try {
+                ws.send(JSON.stringify({
+                    type: 'command',
+                    content: content
+                }));
+            } catch (error) {
+                console.error('Erro ao enviar:', error);
+                addMessage('❌ Erro ao enviar mensagem', 'bot');
+            }
+
+            messageInput.value = '';
+            messageInput.focus();
+        }
+
+        sendBtn.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+
+        // Initial connection
+        connect();
+
+        // Welcome message
+        setTimeout(() => {
+            addMessage('Olá! 👋 Sou o Axolotl-Byte. Clique nos comandos ou digite para começar!', 'bot');
+            animateAvatar('bot');
+        }, 500);
+    </script>
+</body>
+</html>
