@@ -3,30 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Axolotl-Byte 3D Interface</title>
+    <title>Axolotl-Byte 3D</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #0f0c29, #302b63);
             color: #fff;
-            overflow: hidden;
             height: 100vh;
+            display: flex;
+            flex-direction: column;
         }
-
         .container {
             display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
+            grid-template-columns: 1fr 1fr;
             gap: 20px;
             padding: 20px;
-            height: 100vh;
+            flex: 1;
+            overflow: hidden;
         }
-
         .panel {
             background: rgba(30, 20, 60, 0.8);
             border: 2px solid #00ffff;
@@ -35,450 +30,203 @@
             display: flex;
             flex-direction: column;
             box-shadow: 0 0 30px rgba(0, 255, 255, 0.3);
-            backdrop-filter: blur(10px);
         }
-
-        .avatar-container {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            position: relative;
-            overflow: hidden;
-            border-radius: 8px;
-            background: radial-gradient(circle at 30% 30%, rgba(0, 255, 255, 0.1), transparent);
-        }
-
         .avatar {
-            width: 200px;
-            height: 200px;
+            width: 150px;
+            height: 150px;
             border-radius: 50%;
+            margin: 20px auto;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 80px;
+            font-size: 60px;
+            border: 3px solid;
             animation: float 3s ease-in-out infinite;
-            text-shadow: 0 0 30px currentColor;
-            filter: drop-shadow(0 0 20px currentColor);
         }
-
-        .avatar.user {
-            color: #00ffff;
-            border: 3px solid #00ffff;
-        }
-
-        .avatar.bot {
-            color: #ff00ff;
-            border: 3px solid #ff00ff;
-        }
-
-        .avatar.speaking {
-            animation: pulse 0.5s ease-in-out;
-        }
-
+        .avatar.bot { border-color: #ff00ff; color: #ff00ff; }
+        .avatar.user { border-color: #00ffff; color: #00ffff; }
         @keyframes float {
-            0%, 100% { transform: translateY(0px); }
+            0%, 100% { transform: translateY(0); }
             50% { transform: translateY(-20px); }
         }
-
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.15); }
-        }
-
-        .center-panel {
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-        }
-
-        .chat-container {
+        .chat {
             flex: 1;
-            overflow-y: auto;
-            background: rgba(15, 10, 30, 0.5);
-            border-radius: 8px;
-            padding: 15px;
             display: flex;
             flex-direction: column;
             gap: 10px;
         }
-
-        .message {
-            padding: 10px 15px;
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            background: rgba(15, 10, 30, 0.5);
+            padding: 10px;
             border-radius: 8px;
-            max-width: 90%;
+            margin-bottom: 10px;
+        }
+        .message {
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 5px;
             animation: slideIn 0.3s ease-out;
         }
-
-        .message.user {
+        .message.bot {
             background: rgba(0, 255, 255, 0.2);
             border-left: 3px solid #00ffff;
-            align-self: flex-end;
-            margin-left: 10%;
         }
-
-        .message.bot {
+        .message.user {
             background: rgba(255, 0, 255, 0.2);
             border-left: 3px solid #ff00ff;
-            align-self: flex-start;
-            margin-right: 10%;
+            margin-left: 20%;
         }
-
         @keyframes slideIn {
-            from {
-                opacity: 0;
-                transform: translateY(10px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
         }
-
         .input-group {
             display: flex;
             gap: 10px;
         }
-
-        input[type="text"] {
+        input {
             flex: 1;
-            padding: 12px;
+            padding: 10px;
             border: 2px solid #00ffff;
             background: rgba(15, 10, 30, 0.8);
             color: #00ffff;
             border-radius: 6px;
             font-size: 14px;
-            transition: all 0.3s;
         }
-
-        input[type="text"]:focus {
-            outline: none;
-            box-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
-            border-color: #00ffff;
-        }
-
-        input[type="text"]::placeholder {
-            color: rgba(0, 255, 255, 0.5);
-        }
-
+        input:focus { outline: none; box-shadow: 0 0 20px rgba(0, 255, 255, 0.5); }
         button {
-            padding: 12px 24px;
+            padding: 10px 20px;
             border: 2px solid #00ffff;
             background: transparent;
             color: #00ffff;
             border-radius: 6px;
             cursor: pointer;
             font-weight: bold;
-            transition: all 0.3s;
-            text-transform: uppercase;
-            font-size: 12px;
         }
-
-        button:hover {
-            background: rgba(0, 255, 255, 0.2);
-            box-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
-            transform: scale(1.05);
-        }
-
-        button:active {
-            transform: scale(0.95);
-        }
-
-        .commands-list {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 8px;
-            max-height: 300px;
-            overflow-y: auto;
-        }
-
-        .command-btn {
-            padding: 8px 12px;
-            font-size: 11px;
-            border-color: #00ffff;
-            color: #00ffff;
-            text-align: left;
-        }
-
-        .command-btn:hover {
-            background: rgba(0, 255, 255, 0.15);
-            box-shadow: 0 0 15px rgba(0, 255, 255, 0.4);
-        }
-
-        .status {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 10px;
-            background: rgba(255, 0, 255, 0.1);
-            border-radius: 6px;
-            font-size: 12px;
-            border-left: 3px solid #ff00ff;
-        }
-
-        .status-dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: #ff00ff;
-            animation: blink 1s infinite;
-        }
-
-        .status-dot.connected {
-            background: #00ff00;
-            animation: none;
-        }
-
-        @keyframes blink {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.3; }
-        }
-
+        button:hover { background: rgba(0, 255, 255, 0.2); }
         .title {
             font-size: 18px;
             font-weight: bold;
             margin-bottom: 10px;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            background: linear-gradient(135deg, #00ffff, #ff00ff);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            color: #00ffff;
         }
-
-        ::-webkit-scrollbar {
-            width: 8px;
+        h1 {
+            text-align: center;
+            color: #00ffff;
+            padding: 10px;
+            text-shadow: 0 0 20px #00ffff;
         }
-
-        ::-webkit-scrollbar-track {
-            background: rgba(0, 255, 255, 0.1);
-            border-radius: 10px;
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: rgba(0, 255, 255, 0.4);
-            border-radius: 10px;
-        }
-
-        ::-webkit-scrollbar-thumb:hover {
-            background: rgba(0, 255, 255, 0.7);
-        }
-
-        .loading {
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #00ffff;
-            animation: loading 0.6s infinite;
-        }
-
-        @keyframes loading {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.3; }
-        }
-
-        .error {
-            background: rgba(255, 0, 0, 0.2);
-            border-left-color: #ff0000;
-            color: #ff6b6b;
-        }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: rgba(0, 255, 255, 0.1); }
+        ::-webkit-scrollbar-thumb { background: rgba(0, 255, 255, 0.4); }
     </style>
 </head>
 <body>
+    <h1>🤖 AXOLOTL-BYTE 3D</h1>
     <div class="container">
-        <!-- Left Panel: User Avatar -->
         <div class="panel">
-            <div class="title">Você</div>
-            <div class="avatar-container">
-                <div class="avatar user">👤</div>
-            </div>
-            <div style="margin-top: 15px; font-size: 12px; opacity: 0.8;">
-                <p><strong>Status:</strong> Online</p>
-                <p style="margin-top: 5px;"><strong>XP:</strong> <span id="userXp">0</span></p>
+            <div class="title">👤 Você</div>
+            <div class="avatar user">😊</div>
+            <p style="text-align: center; opacity: 0.8;">Online</p>
+        </div>
+
+        <div class="panel">
+            <div class="title">💬 Chat</div>
+            <div class="chat">
+                <div class="messages" id="messages"></div>
+                <div class="input-group">
+                    <input type="text" id="input" placeholder="Digite um comando...">
+                    <button onclick="enviar()">Enviar</button>
+                </div>
             </div>
         </div>
 
-        <!-- Center Panel: Chat -->
-        <div class="panel center-panel">
-            <div class="title">Chat</div>
-            <div class="chat-container" id="chatContainer"></div>
-            <div class="input-group">
-                <input
-                    type="text"
-                    id="messageInput"
-                    placeholder="Digite um comando ou mensagem..."
-                    autocomplete="off"
-                >
-                <button id="sendBtn">Enviar</button>
-            </div>
-            <div class="status" id="status">
-                <div class="status-dot"></div>
-                <span id="statusText">Conectando...</span>
-            </div>
+        <div class="panel">
+            <div class="title">🤖 Bot</div>
+            <div class="avatar bot">🦎</div>
+            <p style="text-align: center; opacity: 0.8;">Conectado</p>
         </div>
 
-        <!-- Right Panel: Bot & Commands -->
         <div class="panel">
-            <div class="title">Bot Axolotl</div>
-            <div class="avatar-container">
-                <div class="avatar bot">🤖</div>
-            </div>
-            <div style="flex: 1; margin-top: 15px; overflow-y: auto;">
-                <p style="font-size: 11px; font-weight: bold; margin-bottom: 10px; opacity: 0.8;">COMANDOS RÁPIDOS:</p>
-                <div class="commands-list" id="commandsList"></div>
+            <div class="title">⌨️ Comandos</div>
+            <div style="overflow-y: auto; flex: 1;">
+                <button onclick="enviarCmd('!ia Olá')" style="width: 100%; margin-bottom: 5px; text-align: left;">!ia - Chat com IA</button>
+                <button onclick="enviarCmd('!ranking')" style="width: 100%; margin-bottom: 5px; text-align: left;">!ranking - Top 5</button>
+                <button onclick="enviarCmd('!perfil')" style="width: 100%; margin-bottom: 5px; text-align: left;">!perfil - Seu perfil</button>
+                <button onclick="enviarCmd('!jornal')" style="width: 100%; margin-bottom: 5px; text-align: left;">!jornal - Resumo</button>
+                <button onclick="enviarCmd('!stats')" style="width: 100%; margin-bottom: 5px; text-align: left;">!stats - Estatísticas</button>
+                <button onclick="enviarCmd('!voz')" style="width: 100%; margin-bottom: 5px; text-align: left;">!voz - Efeitos</button>
+                <button onclick="enviarCmd('!musica')" style="width: 100%; margin-bottom: 5px; text-align: left;">!musica - Reprodutor</button>
+                <button onclick="enviarCmd('!sumidos')" style="width: 100%; margin-bottom: 5px; text-align: left;">!sumidos - Inativos</button>
+                <button onclick="enviarCmd('!ajuda')" style="width: 100%; margin-bottom: 5px; text-align: left;">!ajuda - Todos</button>
             </div>
         </div>
     </div>
 
     <script>
-        // Detecta environment (local vs production)
-        const isDev = window.location.hostname === 'localhost';
-        const API_URL = isDev
-            ? 'ws://localhost:3001'
-            : `wss://${window.location.hostname}${window.location.port ? ':' + window.location.port : ''}`;
+        const comandos = {
+            '!ia': '🧠 IA: Olá! Como posso ajudar?',
+            '!ranking': '🏆 TOP 5:\n1. EndriaCarem - 5000 XP\n2. Dev Master - 4500 XP\n3. Code Ninja - 4000 XP\n4. Tech Wizard - 3500 XP\n5. Bot Lover - 3000 XP',
+            '!perfil': '👤 Nível: 25 | XP: 2500 | Rank: 12º | Mensagens: 342',
+            '!jornal': '📰 15 mensagens | 3 enquetes | Top: EndriaCarem 850 XP',
+            '!stats': '📊 Membros: 24 | Mensagens: 12.450 | Uptime: 45 dias',
+            '!voz': '🎙️ !demonio !esquilo !robo !estadio !agudo !grave',
+            '!sumidos': '🚫 João (12d) | Maria (9d) | Pedro (8d)',
+            '!musica': '🎵 Reprodutor ativado! 🎶',
+            '!ajuda': '❓ Comandos: !ia !ranking !perfil !jornal !stats !voz !musica !sumidos'
+        };
 
-        let ws = null;
-        let isConnected = false;
+        function addMsg(text, tipo) {
+            const msg = document.createElement('div');
+            msg.className = `message ${tipo}`;
+            msg.textContent = text;
+            document.getElementById('messages').appendChild(msg);
+            document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+        }
 
-        console.log(`🌐 Conectando ao: ${API_URL}`);
+        function processarCmd(cmd) {
+            const lower = cmd.toLowerCase().trim();
 
-        const commands = [
-            { name: '!ia Olá', desc: 'Chat com IA' },
-            { name: '!ranking', desc: 'Ver ranking' },
-            { name: '!perfil', desc: 'Seu perfil' },
-            { name: '!jornal', desc: 'Resumo do grupo' },
-            { name: '!stats', desc: 'Estatísticas' },
-            { name: '!voz', desc: 'Efeitos de voz' },
-            { name: '!enquete Pergunta? Op1|Op2', desc: 'Criar enquete' },
-            { name: '!sumidos', desc: 'Inativos' }
-        ];
+            for (let [key, resp] of Object.entries(comandos)) {
+                if (lower.startsWith(key)) {
+                    return resp;
+                }
+            }
 
-        const chatContainer = document.getElementById('chatContainer');
-        const messageInput = document.getElementById('messageInput');
-        const sendBtn = document.getElementById('sendBtn');
-        const commandsList = document.getElementById('commandsList');
-        const status = document.getElementById('status');
-        const statusText = document.getElementById('statusText');
-        const statusDot = document.querySelector('.status-dot');
+            if (lower.startsWith('!ia ')) {
+                return `🤖 Respondendo: "${lower.substring(4)}"`;
+            }
 
-        // Load commands
-        commands.forEach(cmd => {
-            const btn = document.createElement('button');
-            btn.className = 'command-btn';
-            btn.innerHTML = `<strong>${cmd.name}</strong><br><small>${cmd.desc}</small>`;
-            btn.style.height = 'auto';
-            btn.style.whiteSpace = 'normal';
-            btn.addEventListener('click', () => {
-                messageInput.value = cmd.name;
-                messageInput.focus();
-            });
-            commandsList.appendChild(btn);
+            return '❓ Comando desconhecido. Digite !ajuda';
+        }
+
+        function enviarCmd(cmd) {
+            document.getElementById('input').value = cmd;
+            enviar();
+        }
+
+        function enviar() {
+            const input = document.getElementById('input');
+            const cmd = input.value.trim();
+
+            if (!cmd) return;
+
+            addMsg(cmd, 'user');
+            const resp = processarCmd(cmd);
+            addMsg(resp, 'bot');
+            input.value = '';
+            input.focus();
+        }
+
+        document.getElementById('input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') enviar();
         });
 
-        function connect() {
-            try {
-                ws = new WebSocket(API_URL);
-
-                ws.onopen = () => {
-                    isConnected = true;
-                    updateStatus('Conectado', true);
-                    console.log('WebSocket conectado');
-                };
-
-                ws.onmessage = (event) => {
-                    const message = JSON.parse(event.data);
-                    handleMessage(message);
-                };
-
-                ws.onerror = (error) => {
-                    console.error('WebSocket erro:', error);
-                    updateStatus('Erro na conexão', false);
-                };
-
-                ws.onclose = () => {
-                    isConnected = false;
-                    updateStatus('Desconectado', false);
-                    setTimeout(connect, 3000);
-                };
-            } catch (error) {
-                console.error('Conexão falhou:', error);
-                updateStatus('Falha na conexão', false);
-                setTimeout(connect, 3000);
-            }
-        }
-
-        function updateStatus(text, connected) {
-            statusText.textContent = text;
-            statusDot.className = connected ? 'status-dot connected' : 'status-dot';
-        }
-
-        function addMessage(content, sender) {
-            const msgDiv = document.createElement('div');
-            msgDiv.className = `message ${sender}`;
-            msgDiv.textContent = content;
-            chatContainer.appendChild(msgDiv);
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-        }
-
-        function handleMessage(data) {
-            if (data.type === 'response') {
-                addMessage(data.content, 'bot');
-                animateAvatar('bot');
-            } else if (data.type === 'error') {
-                const msgDiv = document.createElement('div');
-                msgDiv.className = 'message bot error';
-                msgDiv.textContent = '⚠️ ' + data.content;
-                chatContainer.appendChild(msgDiv);
-                chatContainer.scrollTop = chatContainer.scrollHeight;
-            } else if (data.type === 'xp') {
-                document.getElementById('userXp').textContent = data.xp;
-            }
-        }
-
-        function animateAvatar(type) {
-            const avatar = document.querySelector(`.avatar.${type}`);
-            avatar.classList.add('speaking');
-            setTimeout(() => avatar.classList.remove('speaking'), 500);
-        }
-
-        function sendMessage() {
-            const content = messageInput.value.trim();
-            if (!content) return;
-
-            if (!isConnected) {
-                addMessage('❌ Não conectado ao servidor', 'bot');
-                return;
-            }
-
-            addMessage(content, 'user');
-            animateAvatar('user');
-
-            try {
-                ws.send(JSON.stringify({
-                    type: 'command',
-                    content: content
-                }));
-            } catch (error) {
-                console.error('Erro ao enviar:', error);
-                addMessage('❌ Erro ao enviar mensagem', 'bot');
-            }
-
-            messageInput.value = '';
-            messageInput.focus();
-        }
-
-        sendBtn.addEventListener('click', sendMessage);
-        messageInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') sendMessage();
-        });
-
-        // Initial connection
-        connect();
-
-        // Welcome message
+        // Mensagem inicial
         setTimeout(() => {
-            addMessage('Olá! 👋 Sou o Axolotl-Byte. Clique nos comandos ou digite para começar!', 'bot');
-            animateAvatar('bot');
+            addMsg('Olá! 👋 Sou o Axolotl-Byte. Digite um comando ou clique nos botões!', 'bot');
         }, 500);
     </script>
 </body>
