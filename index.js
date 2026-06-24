@@ -14,7 +14,8 @@ import {
   addXP, addAudio, addMoedas, getMoedas, transferirMoedas,
   bonusDiario, buscarUsuarioPorNome, getUsuarioPorJid,
   logMsg, upsertUsuario, setCargoCustom, setAreaTi, getAdminDestaque,
-  checarResetMensal,
+  checarResetMensal, getUltimoPontoHoje, contarPontosHoje, registrarPonto,
+  getConfig, setConfig,
 } from "./db.js";
 import { textoRanking, textoPerfil, textoSubiuNivel, AREAS_TI, textoRegras } from "./xp.js";
 import {
@@ -25,9 +26,16 @@ import {
   responderIA, resumoGrupo, fofocaGrupo, previsaoFuturo,
   compatibilidade, respostaModoLivre, isModoLivre, setModoLivre,
 } from "./ia.js";
+import { getJogoAtivo, encerrarJogo, sairJogo, getJogadores as getJogadoresAtivos } from "./jogos/db_jogos.js";
+import { unoIniciar, unoEntrar, unoComecou, unoJogar, unoComprar, unoVerMao, unoEscolherCor, unoGritarUno, unoDesistir } from "./jogos/uno.js";
+import { vjIniciar, vjEntrar, vjComecou, vjPedir, vjParar, vjVerMao } from "./jogos/vinte_e_um.js";
+import { guerraIniciar, guerraEntrar, guerraComecou, guerraVirar } from "./jogos/baralho.js";
 
 const makeWASocket = baileys.default ?? baileys;
 const PORT = process.env.PORT || 3000;
+
+// Timestamp de quando o bot subiu — mensagens anteriores a isso são ignoradas
+const BOT_INICIOU_EM = Math.floor(Date.now() / 1000);
 
 // Cooldown do modo livre: guarda o timestamp da última resposta por pessoa
 const cooldownModoLivre = new Map();
@@ -124,6 +132,7 @@ async function iniciar() {
   });
 
   sock.ev.on("messages.upsert", ({ messages, type }) => {
+    console.log(`📨 messages.upsert type=${type} count=${messages.length}`);
     if (type !== "notify" && type !== "append") return;
     for (const msg of messages) {
       processarMensagem(sock, msg).catch(err => console.error("Erro:", err.message));
@@ -275,6 +284,10 @@ async function processarMensagem(sock, msg) {
   console.log(`📩 msg de ${msg.key.remoteJid} fromMe=${msg.key.fromMe} tipo=${Object.keys(msg.message || {}).join(",")}`);
   if (msg.key.fromMe || !msg.message) return;
 
+  // Mensagens antigas (antes do bot subir): registra XP/log mas não executa comandos nem responde
+  const msgTs = msg.messageTimestamp || 0;
+  const isMsgAntiga = msgTs < BOT_INICIOU_EM;
+
   const chatId = msg.key.remoteJid;
   const jid    = getJid(msg);
   const nome   = getNome(msg);
@@ -307,6 +320,49 @@ async function processarMensagem(sock, msg) {
     msg.message.videoMessage?.caption || ""
   ).trim();
 
+  // ── Sticker de ponto (figurinha do relógio de ponto) ──────────────────────
+  if (tipoMsg === "sticker" && isGrupo(msg)) {
+    const raw = msg.message.stickerMessage?.fileSha256;
+    const stickerHash = raw ? Buffer.from(raw).toString("base64") : null;
+
+    // Hashes do .env + hashes salvos no banco (adicionados via !addponto)
+    const hashesEnv = (process.env.STICKER_PONTO_HASH || "").split(",").map(h => h.trim()).filter(Boolean);
+    const hashesDb  = (getConfig("ponto_hashes_extra", "")).split(",").map(h => h.trim()).filter(Boolean);
+    const HASHES_PONTO = [...new Set([...hashesEnv, ...hashesDb])];
+
+    if (!HASHES_PONTO.includes(stickerHash)) {
+      // Guarda o último hash desconhecido no banco pra admin aprovar com !addponto
+      setConfig("ponto_hash_pendente", stickerHash || "");
+      setConfig("ponto_hash_pendente_nome", nome);
+      console.log(`🎴 Sticker de ${nome} não reconhecido | hash: ${stickerHash}`);
+    }
+    if (HASHES_PONTO.includes(stickerHash)) {
+      const total = contarPontosHoje(chatId, jid);
+      const agora = new Date();
+      const hora = agora.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+      const data = agora.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "2-digit", year: "numeric" });
+
+      let tipo, msg_txt;
+      if (total === 0) {
+        tipo = "entrada";
+        msg_txt = `🟢 *Ponto registrado!*\n\n👤 *${nome}*\n📋 Tipo: Entrada\n🕐 ${hora}\n📅 ${data}`;
+      } else if (total === 1) {
+        tipo = "intervalo";
+        msg_txt = `🟡 *Ponto registrado!*\n\n👤 *${nome}*\n📋 Tipo: Intervalo\n🕐 ${hora}\n📅 ${data}`;
+      } else if (total === 2) {
+        tipo = "retorno";
+        msg_txt = `🔵 *Ponto registrado!*\n\n👤 *${nome}*\n📋 Tipo: Retorno do intervalo\n🕐 ${hora}\n📅 ${data}`;
+      } else {
+        tipo = "saida";
+        msg_txt = `🔴 *Ponto registrado!*\n\n👤 *${nome}*\n📋 Tipo: Saída\n🕐 ${hora}\n📅 ${data}\n\n_Até amanhã! 👋_`;
+      }
+
+      registrarPonto(chatId, jid, nome, tipo);
+      await sock.sendMessage(chatId, { text: msg_txt }, { quoted: msg });
+      return;
+    }
+  }
+
   // ── Temporada mensal: zera o ranking na virada do mês ─────────────────────
   if (isGrupo(msg)) {
     const mesAnterior = checarResetMensal(chatId);
@@ -327,14 +383,17 @@ async function processarMensagem(sock, msg) {
 
   if (tipoMsg === "audio") {
     addAudio(chatId, jid, nome);
-    addMoedas(chatId, jid, 3); // áudio vale mais
+    addMoedas(chatId, jid, 3);
     const { subiuNivel, nivelNovo } = addXP(chatId, jid, nome, 15);
-    if (subiuNivel) await sock.sendMessage(chatId, { text: textoSubiuNivel(chatId, jid, nome, nivelNovo) });
+    if (subiuNivel && !isMsgAntiga) await sock.sendMessage(chatId, { text: textoSubiuNivel(chatId, jid, nome, nivelNovo) });
   } else if (tipoMsg === "text" && texto) {
-    addMoedas(chatId, jid, 1); // 1 moeda por mensagem
+    addMoedas(chatId, jid, 1);
     const { subiuNivel, nivelNovo } = addXP(chatId, jid, nome, 5);
-    if (subiuNivel) await sock.sendMessage(chatId, { text: textoSubiuNivel(chatId, jid, nome, nivelNovo) });
+    if (subiuNivel && !isMsgAntiga) await sock.sendMessage(chatId, { text: textoSubiuNivel(chatId, jid, nome, nivelNovo) });
   }
+
+  // Mensagens antigas: XP/log já foram registrados acima, para por aqui
+  if (isMsgAntiga) return;
 
   // ── Comandos com ! ─────────────────────────────────────────────────────────
   if (texto.startsWith("!")) {
@@ -371,7 +430,8 @@ async function processarMensagem(sock, msg) {
   }
 
   // ── Modo livre: IA responde espontaneamente ────────────────────────────────
-  if (isGrupo(msg) && isModoLivre(chatId) && tipoMsg === "text" && texto.length >= 2) {
+  // Não interfere quando há um jogo ativo
+  if (isGrupo(msg) && isModoLivre(chatId) && !getJogoAtivo(chatId) && tipoMsg === "text" && texto.length >= 2) {
     const agora = Date.now();
     const chave = `${chatId}:${jid}`;
     const ultimo = cooldownModoLivre.get(chave) || 0;
@@ -452,6 +512,248 @@ async function processarComando(sock, msg, chatId, jid, nome, texto, botJid) {
             `• *!daily* — bônus diário (resgate 1x/dia)\n\n` +
             `*!transferir @pessoa 50* — enviar moedas`
     }, { quoted: msg });
+    return;
+  }
+
+  if (cmd === "!addponto") {
+    if (!await isAdminGrupo(sock, chatId, jid)) {
+      await sock.sendMessage(chatId, { text: "🔒 Só admins podem aprovar figurinhas de ponto." }, { quoted: msg });
+      return;
+    }
+    const pendente = getConfig("ponto_hash_pendente", "");
+    const nomePendente = getConfig("ponto_hash_pendente_nome", "alguém");
+    if (!pendente) {
+      await sock.sendMessage(chatId, { text: "✅ Nenhuma figurinha pendente de aprovação." }, { quoted: msg });
+      return;
+    }
+    const atuais = (getConfig("ponto_hashes_extra", "")).split(",").map(h => h.trim()).filter(Boolean);
+    if (!atuais.includes(pendente)) {
+      setConfig("ponto_hashes_extra", [...atuais, pendente].join(","));
+    }
+    setConfig("ponto_hash_pendente", "");
+    setConfig("ponto_hash_pendente_nome", "");
+    await sock.sendMessage(chatId, { text: `✅ Figurinha de *${nomePendente}* aprovada! Ela já pode registrar ponto com o sticker.` }, { quoted: msg });
+    return;
+  }
+
+  if (cmd === "!ponto") {
+    const total = contarPontosHoje(chatId, jid);
+    const agora = new Date();
+    const hora = agora.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    const data = agora.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "2-digit", year: "numeric" });
+    let tipo, msg_txt;
+    if (total === 0) {
+      tipo = "entrada";
+      msg_txt = `🟢 *Ponto registrado!*\n\n👤 *${nome}*\n📋 Tipo: Entrada\n🕐 ${hora}\n📅 ${data}`;
+    } else if (total === 1) {
+      tipo = "intervalo";
+      msg_txt = `🟡 *Ponto registrado!*\n\n👤 *${nome}*\n📋 Tipo: Intervalo\n🕐 ${hora}\n📅 ${data}`;
+    } else if (total === 2) {
+      tipo = "retorno";
+      msg_txt = `🔵 *Ponto registrado!*\n\n👤 *${nome}*\n📋 Tipo: Retorno do intervalo\n🕐 ${hora}\n📅 ${data}`;
+    } else {
+      tipo = "saida";
+      msg_txt = `🔴 *Ponto registrado!*\n\n👤 *${nome}*\n📋 Tipo: Saída\n🕐 ${hora}\n📅 ${data}\n\n_Até amanhã! 👋_`;
+    }
+    registrarPonto(chatId, jid, nome, tipo);
+    await sock.sendMessage(chatId, { text: msg_txt }, { quoted: msg });
+    return;
+  }
+
+  // ── Jogos ──────────────────────────────────────────────────────────────────
+
+  if (cmd === "!jogo") {
+    const opcao = semCmd().trim();
+    const ativo = getJogoAtivo(chatId);
+
+    // Sem argumento → mostra menu
+    if (!opcao) {
+      if (ativo) {
+        await sock.sendMessage(chatId, {
+          text: `⚠️ Já tem um jogo de *${ativo.tipo.toUpperCase()}* em andamento!\nUse *!cancelar* para encerrar antes de iniciar outro.`
+        });
+        return;
+      }
+      await sock.sendMessage(chatId, {
+        text:
+          `🎮 *Central de Jogos*\n\n` +
+          `Escolha o jogo que quer jogar:\n\n` +
+          `1️⃣  *UNO* — jogue cartas, bloqueie e elimine os rivais\n` +
+          `2️⃣  *21 / Blackjack* — chegue em 21 sem estourar\n` +
+          `3️⃣  *Guerra* — maior carta leva tudo\n\n` +
+          `Digite *!jogo 1*, *!jogo 2* ou *!jogo 3* para iniciar.`
+      });
+      return;
+    }
+
+    if (ativo) {
+      await sock.sendMessage(chatId, { text: `⚠️ Já tem um jogo de *${ativo.tipo.toUpperCase()}* ativo! Use *!cancelar* primeiro.` });
+      return;
+    }
+
+    if (opcao === "1" || opcao === "uno") { await unoIniciar(sock, chatId, jid, nome); return; }
+    if (opcao === "2" || opcao === "21" || opcao === "blackjack") { await vjIniciar(sock, chatId, jid, nome); return; }
+    if (opcao === "3" || opcao === "guerra") { await guerraIniciar(sock, chatId, jid, nome); return; }
+
+    await sock.sendMessage(chatId, { text: "❌ Opção inválida. Use *!jogo* para ver o menu." });
+    return;
+  }
+
+  // Comandos compartilhados entre jogos — redireciona pro jogo ativo
+  if (cmd === "!entrar") {
+    const jogo = getJogoAtivo(chatId);
+    if (!jogo) { await sock.sendMessage(chatId, { text: "⚠️ Nenhum jogo ativo no momento." }); return; }
+    if (jogo.tipo === "uno")    await unoEntrar(sock, chatId, jid, nome);
+    if (jogo.tipo === "21")     await vjEntrar(sock, chatId, jid, nome);
+    if (jogo.tipo === "guerra") await guerraEntrar(sock, chatId, jid, nome);
+    return;
+  }
+
+  if (cmd === "!comecar") {
+    const jogo = getJogoAtivo(chatId);
+    if (!jogo) return;
+    if (jogo.tipo === "uno")    await unoComecou(sock, chatId);
+    if (jogo.tipo === "21")     await vjComecou(sock, chatId);
+    if (jogo.tipo === "guerra") await guerraComecou(sock, chatId);
+    return;
+  }
+
+  if (cmd === "!cancelar") {
+    const jogo = getJogoAtivo(chatId);
+    if (!jogo) { await sock.sendMessage(chatId, { text: "⚠️ Nenhum jogo ativo." }); return; }
+    encerrarJogo(chatId);
+    await sock.sendMessage(chatId, { text: `❌ Jogo de *${jogo.tipo.toUpperCase()}* cancelado.` });
+    return;
+  }
+
+  if (cmd === "!desistir") {
+    const jogo = getJogoAtivo(chatId);
+    if (!jogo) return;
+    if (jogo.tipo === "uno") await unoDesistir(sock, chatId, jid, nome);
+    else {
+      sairJogo(jogo.id, jid);
+      await sock.sendMessage(chatId, { text: `🏳️ *${nome}* desistiu.` });
+      const restantes = getJogadoresAtivos(jogo.id);
+      if (restantes.length <= 1) {
+        if (restantes.length === 1) await sock.sendMessage(chatId, { text: `🏆 *${restantes[0].nome}* venceu por W.O.!` });
+        encerrarJogo(chatId);
+      }
+    }
+    return;
+  }
+
+  if (cmd === "!jogar") {
+    // UNO: !jogar vermelho 7
+    const args = semCmd().toLowerCase().split(" ").filter(Boolean);
+    await unoJogar(sock, chatId, jid, nome, args);
+    return;
+  }
+
+  if (cmd === "!comprar") {
+    await unoComprar(sock, chatId, jid, nome);
+    return;
+  }
+
+  if (cmd === "!mao" || cmd === "!mão") {
+    const jogoAtivo = getJogoAtivo(chatId);
+    if (jogoAtivo?.tipo === "21") await vjVerMao(sock, chatId, jid, nome);
+    else await unoVerMao(sock, chatId, jid, nome);
+    return;
+  }
+
+  if (cmd === "!cor") {
+    const cor = semCmd().toLowerCase().trim();
+    await unoEscolherCor(sock, chatId, jid, cor);
+    return;
+  }
+
+  if (cmd === "!uno") {
+    await unoGritarUno(sock, chatId, jid, nome);
+    return;
+  }
+
+  if (cmd === "!ajuda" || cmd === "!regras") {
+    const jogoAtivo = getJogoAtivo(chatId);
+    if (!jogoAtivo) {
+      await sock.sendMessage(chatId, {
+        text:
+          `🎮 *Central de Jogos — Ajuda*\n\n` +
+          `Use *!jogo* para ver os jogos disponíveis.\n\n` +
+          `*Comandos gerais:*\n` +
+          `• *!jogo* → menu de jogos\n` +
+          `• *!entrar* → entrar no jogo aberto\n` +
+          `• *!comecar* → iniciar quando pronto\n` +
+          `• *!cancelar* → encerrar o jogo\n` +
+          `• *!ajuda* → ver regras do jogo ativo`
+      });
+      return;
+    }
+    if (jogoAtivo.tipo === "uno") {
+      await sock.sendMessage(chatId, {
+        text:
+          `🃏 *Regras do UNO*\n\n` +
+          `*Objetivo:* ser o primeiro a ficar sem cartas.\n\n` +
+          `*Comandos:*\n` +
+          `• *!jogar [cor] [valor]* → joga uma carta\n` +
+          `  Ex: _!jogar vermelho 7_ ou _!jogar azul Pular_\n` +
+          `• *!comprar* → compra uma carta (passa a vez)\n` +
+          `• *!mao* → ver suas cartas no privado\n` +
+          `• *!cor [cor]* → escolher cor após Coringa ou +4\n` +
+          `  Ex: _!cor azul_\n` +
+          `• *!uno* → grite quando ficar com 1 carta!\n\n` +
+          `*Cartas especiais:*\n` +
+          `• *Pular* → próximo jogador perde a vez\n` +
+          `• *Inverter* → inverte a ordem\n` +
+          `• *+2* → próximo compra 2 e perde a vez\n` +
+          `• *Coringa* → muda a cor\n` +
+          `• *+4* → próximo compra 4, perde a vez e você escolhe a cor\n\n` +
+          `*Punição UNO:*\n` +
+          `Se ficar com 1 carta e não gritar *!uno* em 15s,\nalguém pode gritar *!uno* e você leva +2! 😱`
+      });
+    } else if (jogoAtivo.tipo === "21") {
+      await sock.sendMessage(chatId, {
+        text:
+          `🃏 *Regras do 21 / Blackjack*\n\n` +
+          `*Objetivo:* chegar mais perto de 21 sem estourar.\n\n` +
+          `*Comandos:*\n` +
+          `• *!pedir* → pegar mais uma carta\n` +
+          `• *!parar* → parar com as cartas atuais\n` +
+          `• *!mao* → ver suas cartas no privado\n\n` +
+          `*Valores:*\n` +
+          `• A = 11 (ou 1 se estourar)\n` +
+          `• J, Q, K = 10\n` +
+          `• Demais = valor nominal\n\n` +
+          `*Dealer* pede carta até ter 17+.\nVence quem tiver mais perto de 21 sem passar!`
+      });
+    } else if (jogoAtivo.tipo === "guerra") {
+      await sock.sendMessage(chatId, {
+        text:
+          `⚔️ *Regras da Guerra*\n\n` +
+          `*Objetivo:* ficar com todas as cartas do baralho.\n\n` +
+          `*Comandos:*\n` +
+          `• *!virar* → revelar sua carta da rodada\n\n` +
+          `*Como funciona:*\n` +
+          `Todos viram uma carta ao mesmo tempo.\nMaior carta leva todas as cartas da rodada!\n\n` +
+          `*Ordem de força:*\n` +
+          `A > K > Q > J > 10 > 9 > ... > 2\n\n` +
+          `Em caso de empate, as cartas são descartadas.`
+      });
+    }
+    return;
+  }
+
+  if (cmd === "!pedir") {
+    await vjPedir(sock, chatId, jid, nome);
+    return;
+  }
+
+  if (cmd === "!parar") {
+    await vjParar(sock, chatId, jid, nome);
+    return;
+  }
+
+  if (cmd === "!virar") {
+    await guerraVirar(sock, chatId, jid, nome);
     return;
   }
 
@@ -675,7 +977,7 @@ async function processarComando(sock, msg, chatId, jid, nome, texto, botJid) {
       return;
     }
     await sock.sendMessage(chatId, {
-      text: `🌟 *Admin Destaque da Semana*\n\n👑 *${d.nome}*\n📨 ${d.total} mensagens nos últimos 7 dias\n\nObrigado por cuidar do grupo! 💪`
+      text: `🌟 *Destaque da Semana*\n\n👑 *${d.nome}*\n📨 ${d.total} mensagens nos últimos 7 dias\n\nO mais ativo do grupo essa semana! 🔥`
     });
     return;
   }
@@ -804,6 +1106,7 @@ function textoMenuCompleto() {
     `  !perfil — seu XP, cargo e moedas\n` +
     `  !moedas — ver seu saldo de moedas\n` +
     `  !daily — bônus diário de moedas 🎁\n` +
+    `  !ponto — registrar ponto (entrada/intervalo/retorno/saída) 🕐\n` +
     `  !transferir @pessoa 50 — enviar moedas\n` +
     `  !regras — sistema de cargos e XP\n` +
     `  !destaque — admin destaque da semana 🌟\n` +

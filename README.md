@@ -19,13 +19,18 @@ Conecta direto no WhatsApp via Baileys, com interface web 3D futurista para test
 
 ![Axolotl 3D Interface](web3d/preview.svg)
 
-### 🎮 [Demo Interativa 3D →](http://localhost:3001/advanced.html)
+### 🎮 Interface 3D — Pronta para Produção
 
-**Teste agora:** 
+**Teste localmente:** 
 ```bash
 cd web3d && npm install && npm start
+# http://localhost:3001/advanced.html
 ```
-Depois abra: **http://localhost:3001/advanced.html**
+
+**Deploy em Produção** (Hybrid Vercel + Railway):
+```bash
+# Ver: DEPLOY.md para instruções completas
+```
 
 </div>
 

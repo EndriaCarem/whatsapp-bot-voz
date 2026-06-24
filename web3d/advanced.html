@@ -330,6 +330,12 @@
         import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@r128/examples/jsm/controls/OrbitControls.js';
 
         // ========== CONFIG ==========
+        // Detecta ambiente (produção vs local)
+        const isDev = window.location.hostname === 'localhost';
+        const WS_URL = isDev
+            ? 'ws://localhost:3001'
+            : `wss://${window.location.hostname}:${window.location.port || 443}`;
+
         const canvas = document.getElementById('canvas');
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -543,6 +549,9 @@
         const chatBubble = document.getElementById('chatBubble');
         const sceneSelector = document.getElementById('sceneSelector');
         const sceneInfo = document.getElementById('sceneInfo');
+
+        // ========== CONNECTION CONFIG ==========
+        console.log(`🌐 Conectando ao: ${WS_URL}`);
 
         Object.entries(scenes).forEach(([key, data]) => {
             const btn = document.createElement('button');

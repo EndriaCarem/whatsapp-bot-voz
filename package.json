@@ -11,12 +11,14 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@napi-rs/canvas": "^1.0.0",
     "@whiskeysockets/baileys": "^7.0.0-rc13",
     "better-sqlite3": "^12.10.0",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "groq-sdk": "^1.2.1",
     "qrcode": "^1.5.4",
+    "sharp": "^0.34.5",
     "ws": "^8.21.0"
   }
 }

@@ -18,15 +18,28 @@ function delay(ms) {
 }
 
 // ── Fila de requisições ───────────────────────────────────────────────────────
-// Limita a 2 chamadas simultâneas ao Groq pra não estourar o rate limit.
-// O resto entra na fila e é processado assim que uma vaga abre.
 let ativas = 0;
 const fila = [];
-const MAX_SIMULTANEAS = 2;
+const MAX_SIMULTANEAS = 1;
+const TIMEOUT_FILA_MS = 30000; // descarta requisição se ficar 30s na fila sem executar
 
 function executarComFila(fn) {
   return new Promise((resolve, reject) => {
-    fila.push({ fn, resolve, reject });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      reject(new Error("timeout_fila"));
+    }, TIMEOUT_FILA_MS);
+
+    fila.push({
+      fn: async () => {
+        clearTimeout(timer);
+        if (timedOut) throw new Error("timeout_fila");
+        return fn();
+      },
+      resolve,
+      reject,
+    });
     processarFila();
   });
 }
@@ -78,12 +91,13 @@ async function gerar(prompt, { maxTokens = 320, temperatura = 0.9 } = {}) {
 
         return resposta;
       } catch (err) {
+        if (err.message === "timeout_fila") return null;
         const msg = err.message || "";
-        const rateLimit = msg.includes("429") || msg.includes("rate") || msg.includes("limit");
-        console.error(`Groq tentativa ${tentativa}: ${msg.slice(0, 80)}`);
-        if (rateLimit) await delay(tentativa * 3000);
-        else if (tentativa < 3) await delay(1500);
-        else break;
+        const status = err.status || err.statusCode || 0;
+        const rateLimit = status === 429 || status === 413 || msg.includes("429") || msg.includes("413") || msg.includes("rate") || msg.includes("quota") || msg.includes("limit") || msg.includes("too large");
+        console.error(`Groq tentativa ${tentativa}: ${msg.slice(0, 100)}`);
+        if (tentativa === 3) break;
+        await delay(rateLimit ? tentativa * 10000 : 2000);
       }
     }
     return null;
@@ -115,6 +129,13 @@ MOEDAS:
 OUTROS:
 Admin Destaque 🌟 — admin mais ativo da semana (!destaque).
 !regras — ver tudo isso formatado.
+
+COMANDOS EXISTENTES (lista COMPLETA — não invente outros):
+!menu, !ajuda, !help, !ranking, !top, !perfil, !xp, !moedas, !daily, !transferir, !regras, !destaque, !cargo,
+!enquete, !votar, !resultado, !encerrar, !jornal, !signo, !musica, !stats, !estatisticas, !sumidos,
+!ia, !bot, !resumo, !fofoca, !previsao, !compatibilidade, !modolivre, !desativar, !voz,
+!demonio, !esquilo, !robo, !estadio, !agudo, !grave, !vovo, !vovoh, !bebe, !gigante, !alien, !fantasma, !coral, !bebado, !telefone, !radio.
+IMPORTANTE: Se alguém perguntar sobre comandos, cite APENAS os da lista acima. NUNCA invente comandos como !nivel, !xpinfo ou qualquer outro que não esteja nessa lista.
 `;
 
 const PERSONALIDADE_BASE = `Você é o Axolotl-Byte, o bot do grupo de WhatsApp, criado pela comunidade da galera do TI.
@@ -208,8 +229,14 @@ export function setModoLivre(chatId, ativo) {
 export async function responderIA(chatId, pergunta, remetente) {
   if (!getGroq()) return "⚠️ Chave do Groq não configurada. Adicione GROQ_API_KEY no .env";
 
-  const historico = getMensagensRecentes(chatId, 30);
-  const contexto  = historico.map(h => `${h.nome}: ${h.texto || "[áudio]"}`).join("\n");
+  // Pega as últimas 2h de conversa (teto de 80 msgs) pra ter contexto sem estourar tokens
+  let historico = getMensagensPorPeriodo(chatId, 2, 80);
+  if (historico.length < 10) historico = getMensagensRecentes(chatId, 50);
+  // Trunca textos longos pra não estourar tokens do llama-8b (limite ~6k tokens por req)
+  const contexto  = historico.map((h, i) => {
+    const txt = h.texto ? h.texto.slice(0, 120) : "[áudio]";
+    return `[${i + 1}] ${h.nome}: ${txt}`;
+  }).join("\n");
   const tom       = analisarTom(historico, remetente);
   const ctxPessoas = contextoSobrePessoas(chatId, pergunta, historico);
 
@@ -217,9 +244,11 @@ export async function responderIA(chatId, pergunta, remetente) {
 ${REGRAS_GRUPO}
 ${tom}
 
-Histórico recente do grupo:
+Histórico COMPLETO recente do grupo (leia TUDO antes de responder):
 ${contexto || "(sem histórico ainda)"}
 ${ctxPessoas}
+
+IMPORTANTE: Quando a pergunta for sobre algo que aconteceu na conversa (quem está na vez, quem falou o quê, ordem de algo, etc.), analise o histórico acima com atenção e responda baseado SOMENTE no que está escrito. Não invente nem suponha.
 
 ${remetente} disse: "${pergunta}"
 
@@ -235,34 +264,73 @@ Responda como o Axolotl-Byte (espelhando o tom de ${remetente}, mas priorizando 
 export async function resumoGrupo(chatId, tipo = "dia") {
   if (!getGroq()) return "⚠️ Groq não configurado.";
 
-  // Janela de tempo real: dia = últimas 24h, semana = últimos 7 dias.
-  // (antes pegava só as últimas N mensagens, o que em grupo ativo cobria minutos, não o dia)
   const horas = tipo === "semana" ? 24 * 7 : 24;
-  const historico = getMensagensPorPeriodo(chatId, horas, tipo === "semana" ? 600 : 200);
+  const historico = getMensagensPorPeriodo(chatId, horas, tipo === "semana" ? 1000 : 500);
+
   if (historico.length < 3) {
     return tipo === "semana"
       ? "📭 Poucas mensagens nos últimos 7 dias para resumir."
       : "📭 Poucas mensagens nas últimas 24h para resumir.";
   }
 
-  const texto = historico.map(h => `${h.nome}: ${h.texto || "[áudio]"}`).join("\n");
+  const comTexto = historico.filter(h => h.texto && h.texto.trim().length > 2);
+  const totalAudios = historico.length - comTexto.length;
 
-  const prompt = `${PERSONALIDADE_BASE}
+  if (comTexto.length < 3) {
+    return `📰 *Resumo ${tipo === "semana" ? "da Semana" : "do Dia"}*\n\n📭 Quase tudo foram áudios/mídias (${totalAudios}). Sem texto suficiente para resumir.`;
+  }
 
-Aqui estão as mensagens recentes do grupo:
-${texto}
+  // Monta o histórico completo — sem truncar texto individualmente
+  // Limita a 200 msgs para não estourar tokens
+  const amostra = comTexto.slice(-200);
+  const blocos = amostra.map(h => {
+    const txt = h.texto.length > 300 ? h.texto.slice(0, 300) + "…" : h.texto;
+    return `${h.nome}: ${txt}`;
+  }).join("\n");
 
-Faça um resumo ${tipo === "semana" ? "da semana" : "do dia"} do grupo.
-REGRAS IMPORTANTES:
-- Foque em FATOS CONCRETOS: o que cada pessoa falou, decisões, conversas que rolaram
-- SEMPRE cite os nomes das pessoas e o que elas disseram/fizeram
-- Nada de enrolação ou frases genéricas — só o que realmente aconteceu
-- Use tópicos curtos com emoji, tipo bullet points
-- Máximo 8 linhas. Seja direto.`;
+  // Estatísticas reais para incluir no resumo
+  const contagem = {};
+  for (const h of amostra) {
+    contagem[h.nome] = (contagem[h.nome] || 0) + 1;
+  }
+  const maisAtivos = Object.entries(contagem)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([nome, n]) => `${nome} (${n} msgs)`)
+    .join(", ");
 
-  const r = await gerar(prompt);
+  const titulo = tipo === "semana" ? "últimos 7 dias" : "últimas 24 horas";
+
+  const prompt = `Você vai resumir uma conversa REAL de grupo do WhatsApp dos ${titulo}.
+Total de mensagens de texto: ${amostra.length}. Áudios/mídias: ${totalAudios} (não aparecem aqui).
+Quem mais falou: ${maisAtivos}
+
+--- CONVERSA REAL (não invente nada fora daqui) ---
+${blocos}
+--- FIM DA CONVERSA ---
+
+Escreva um resumo detalhado do que REALMENTE aconteceu. Formato:
+
+**Quem falou mais:** [lista com número de mensagens]
+
+**O que rolou:**
+[bullet points com os assuntos reais discutidos, citando nomes e o que disseram/perguntaram/comentaram]
+
+**Destaques:**
+[momentos marcantes, perguntas importantes, notícias compartilhadas, brigas, piadas que geraram reação]
+
+REGRAS ABSOLUTAS:
+1. Use APENAS o que está na conversa acima. PROIBIDO inventar, supor ou completar informações.
+2. Se alguém disse X, escreva "Fulano disse X" — não parafraseie além do necessário.
+3. Se não tiver certeza do que alguém quis dizer, transcreva o trecho original entre aspas.
+4. Não escreva "o grupo discutiu" ou "os membros falaram" de forma vaga — seja específico com nomes.
+5. Se a conversa tiver pouca substância, diga isso claramente em vez de inflar.`;
+
+  const r = await gerar(prompt, { maxTokens: 800, temperatura: 0.3 });
   if (!r) return "Não consegui gerar o resumo agora. Tenta de novo!";
-  return `📰 *Resumo ${tipo === "semana" ? "da Semana" : "do Dia"}*\n\n` + r;
+
+  const rodape = totalAudios > 0 ? `\n\n_🎙️ ${totalAudios} áudio(s)/mídia(s) não incluídos_` : "";
+  return `📰 *Resumo ${tipo === "semana" ? "da Semana" : "do Dia"}*\n_(${amostra.length} mensagens analisadas)_\n\n` + r + rodape;
 }
 
 // ── Colunas criativas do jornal ─────────────────────────────────────────────────
@@ -348,25 +416,27 @@ export async function previsaoFuturo(nome, chatId = null) {
     return `🔮 Previsão para *${nome}*:\nO oráculo tá offline, mas algo me diz que você vai recarregar a página antes de ler isso.`;
   }
 
-  // Usa o jeito real da pessoa no grupo pra personalizar a previsão.
   let contexto = "";
   if (chatId) {
     const ctx = getContextoPessoa(chatId, nome);
-    const falas = ctx?.msgs?.filter(m => m.texto).slice(-10).map(m => m.texto).join(" | ");
-    if (falas) contexto = `\nComo ${nome} se comporta no grupo (amostra real): ${falas}`;
+    const falas = ctx?.msgs?.filter(m => m.texto).slice(-30).map(m => m.texto).join("\n");
+    const perfil = ctx?.perfil;
+    const perfilTxt = perfil ? `Nível ${perfil.nivel}, ${perfil.msgs} mensagens enviadas, ${perfil.audios} áudios` : "";
+    if (falas) contexto = `\nMensagens reais de ${nome} no grupo:\n${falas}${perfilTxt ? `\n\nPerfil: ${perfilTxt}` : ""}`;
   }
 
-  const prompt = `Você é um oráculo perspicaz com humor inteligente (não infantil, nada de bobagem aleatória).
-Faça uma "previsão do futuro" para *${nome}* — divertida, mas ESPERTA e plausível, como se realmente conhecesse a pessoa.
-${contexto || "(sem histórico — faça algo genérico mas com graça e bom senso)"}
+  const prompt = `Você é um oráculo que analisa padrões reais de comportamento para fazer previsões certeiras e bem-humoradas.
 
-Regras:
-- Baseie a previsão no jeito real da pessoa (se houver amostra): manias, assuntos que curte, como escreve
-- Humor observador e afiado, tom de quem alfineta com carinho — nada de "vai dançar salsa" ou absurdo sem sentido
-- Pode incluir 1 porcentagem espirituosa (mas que faça sentido com a pessoa)
-- 3 a 4 linhas. Comece com 🔮 e o nome.`;
+${contexto ? `Analise as mensagens abaixo de ${nome} e identifique: os assuntos que mais fala, o jeito de escrever, os hábitos, o que deixa claro sobre a personalidade dela/dele.\n${contexto}` : `Não há histórico de ${nome}. Faça uma previsão genérica mas inteligente.`}
 
-  const r = await gerar(prompt, { maxTokens: 300, temperatura: 0.85 });
+Com base nessa análise, escreva uma previsão do futuro para *${nome}* que:
+- Cite algo ESPECÍFICO que ela/ele faz ou fala de verdade (não invente se não tiver base)
+- Tenha humor afiado e observador, como um amigo que conhece bem a pessoa
+- Seja plausível — nada de absurdo aleatório (pão de queijo, dançar salsa, etc.)
+- Pode incluir uma porcentagem que faça sentido com o contexto real
+- 3 a 5 linhas. Comece com 🔮 *${nome}*`;
+
+  const r = await gerar(prompt, { maxTokens: 400, temperatura: 0.8 });
   return r || `🔮 O oráculo tá de folga. Tenta de novo, ${nome}!`;
 }
 

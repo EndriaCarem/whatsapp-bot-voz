@@ -63,6 +63,15 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS admins (
     jid TEXT PRIMARY KEY
   );
+
+  CREATE TABLE IF NOT EXISTS ponto (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id  TEXT NOT NULL,
+    jid      TEXT NOT NULL,
+    nome     TEXT NOT NULL,
+    tipo     TEXT NOT NULL,
+    ts       INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  );
 `);
 
 // Migrações para bancos já existentes (CREATE TABLE IF NOT EXISTS não altera colunas).
@@ -287,17 +296,24 @@ export function getMensagensPorPeriodo(chatId, horas, limit = 300) {
 // Busca tudo que o bot sabe sobre uma pessoa específica no grupo.
 // Usado pela IA pra responder perguntas sobre alguém com contexto real.
 export function getContextoPessoa(chatId, nome) {
+  // Busca nome com LIKE para tolerar diferenças de case e parcial
+  const nomePattern = `%${nome}%`;
+  const nomeExato = db.prepare(
+    "SELECT DISTINCT nome FROM mensagens_log WHERE chat_id=? AND nome LIKE ? LIMIT 1"
+  ).get(chatId, nomePattern);
+  const nomeReal = nomeExato?.nome || nome;
+
   // Últimas 30 mensagens da pessoa
   const msgs = db.prepare(`
     SELECT texto, tipo, ts FROM mensagens_log
     WHERE chat_id=? AND nome=? AND texto IS NOT NULL
     ORDER BY id DESC LIMIT 30
-  `).all(chatId, nome);
+  `).all(chatId, nomeReal);
 
-  // Dados de XP/perfil (busca por nome pois pode não ter o jid)
+  // Dados de XP/perfil
   const perfil = db.prepare(
     "SELECT nivel, xp, msgs, audios FROM usuarios WHERE chat_id=? AND nome=?"
-  ).get(chatId, nome);
+  ).get(chatId, nomeReal);
 
   // Com quem ela mais interagiu (quem ela mais respondeu)
   const interacoes = db.prepare(`
@@ -323,12 +339,20 @@ export function getStatsGrupo(chatId) {
       SELECT nome, COUNT(*) as n FROM mensagens_log WHERE chat_id=? AND tipo='audio' AND ts>?
       GROUP BY jid ORDER BY n DESC LIMIT 3
     `).all(chatId, semana),
+    // Sumidos = quem está no grupo mas não fala há mais de 7 dias OU nunca falou
+    // NULLS FIRST não é suportado no SQLite — usa CASE para ordenar nulls primeiro
     sumidos: db.prepare(`
-      SELECT u.nome, u.ultima_msg FROM usuarios u
-      WHERE u.ultima_msg > 0 AND u.ultima_msg < ? AND u.jid IN (
-        SELECT DISTINCT jid FROM mensagens_log WHERE chat_id=?
-      ) ORDER BY u.ultima_msg ASC LIMIT 5
-    `).all((Date.now() - 3 * 86400000), chatId),
+      SELECT u.nome,
+             MAX(m.ts) AS ultimo_ts
+      FROM usuarios u
+      LEFT JOIN mensagens_log m ON m.jid = u.jid AND m.chat_id = u.chat_id
+      WHERE u.chat_id = ?
+      GROUP BY u.jid
+      HAVING ultimo_ts IS NULL
+          OR ultimo_ts < ?
+      ORDER BY CASE WHEN ultimo_ts IS NULL THEN 0 ELSE 1 END, ultimo_ts ASC
+      LIMIT 10
+    `).all(chatId, Math.floor(Date.now() / 1000) - 7 * 86400),
   };
 }
 
@@ -361,12 +385,23 @@ export function removeAdmin(jid) {
 // Retorna o admin que mais mandou mensagens nos últimos 7 dias
 export function getAdminDestaque(chatId) {
   const semanaAtras = Math.floor(Date.now() / 1000) - 7 * 86400;
-  return db.prepare(`
+  // Tenta pegar admin cadastrado primeiro
+  const comAdmin = db.prepare(`
     SELECT m.nome, m.jid, COUNT(*) as total
     FROM mensagens_log m
     INNER JOIN admins a ON a.jid = m.jid
     WHERE m.chat_id = ? AND m.ts >= ?
     GROUP BY m.jid
+    ORDER BY total DESC
+    LIMIT 1
+  `).get(chatId, semanaAtras);
+  if (comAdmin) return comAdmin;
+  // Fallback: membro mais ativo da semana
+  return db.prepare(`
+    SELECT nome, jid, COUNT(*) as total
+    FROM mensagens_log
+    WHERE chat_id = ? AND ts >= ?
+    GROUP BY jid
     ORDER BY total DESC
     LIMIT 1
   `).get(chatId, semanaAtras);
@@ -389,6 +424,36 @@ export function getDiasNoGrupo(chatId, jid) {
   const u = db.prepare("SELECT entrou_em FROM usuarios WHERE chat_id=? AND jid=?").get(chatId, jid);
   if (!u) return 0;
   return Math.floor((Date.now() / 1000 - u.entrou_em) / 86400);
+}
+
+// ── Ponto ─────────────────────────────────────────────────────────────────────
+
+// Retorna o último registro de ponto da pessoa hoje
+export function getUltimoPontoHoje(chatId, jid) {
+  const inicioDia = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+  return db.prepare(
+    "SELECT * FROM ponto WHERE chat_id=? AND jid=? AND ts>=? ORDER BY ts DESC LIMIT 1"
+  ).get(chatId, jid, inicioDia);
+}
+
+// Conta quantos registros a pessoa tem hoje
+export function contarPontosHoje(chatId, jid) {
+  const inicioDia = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+  return db.prepare(
+    "SELECT COUNT(*) as n FROM ponto WHERE chat_id=? AND jid=? AND ts>=?"
+  ).get(chatId, jid, inicioDia).n;
+}
+
+export function registrarPonto(chatId, jid, nome, tipo) {
+  db.prepare("INSERT INTO ponto (chat_id, jid, nome, tipo) VALUES (?,?,?,?)")
+    .run(chatId, jid, nome, tipo);
+}
+
+export function getPontosHoje(chatId, jid) {
+  const inicioDia = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+  return db.prepare(
+    "SELECT tipo, ts FROM ponto WHERE chat_id=? AND jid=? AND ts>=? ORDER BY ts ASC"
+  ).all(chatId, jid, inicioDia);
 }
 
 export default db;

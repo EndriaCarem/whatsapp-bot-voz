@@ -331,9 +331,16 @@
     </div>
 
     <script>
-        const API_URL = 'ws://localhost:3001';
+        // Detecta environment (local vs production)
+        const isDev = window.location.hostname === 'localhost';
+        const API_URL = isDev
+            ? 'ws://localhost:3001'
+            : `wss://${window.location.hostname}${window.location.port ? ':' + window.location.port : ''}`;
+
         let ws = null;
         let isConnected = false;
+
+        console.log(`🌐 Conectando ao: ${API_URL}`);
 
         const commands = [
             { name: '!ia Olá', desc: 'Chat com IA' },

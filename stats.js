@@ -93,7 +93,7 @@ export async function textoJornal(chatId) {
 
   const sumidosTexto = s.sumidos.length
     ? s.sumidos.slice(0, 3).map(u => {
-        const dias = Math.floor((Date.now() - u.ultima_msg) / 86400000);
+        const dias = Math.floor((Math.floor(Date.now() / 1000) - u.ultimo_ts) / 86400);
         return `  👻 *${u.nome}* — sumido há ${dias} dia${dias !== 1 ? "s" : ""}`;
       }).join("\n")
     : "  ✅ Ninguém sumido!";
@@ -115,35 +115,30 @@ export async function textoJornal(chatId) {
     `╚══════════════════╝\n` +
     `_📅 ${data} • Edição Diária_\n\n`;
 
-  // ── Manchete de capa (destaque) ──
-  if (c?.manchete) {
-    txt +=
-      `📰 *MANCHETE*\n` +
-      `🔴 *${c.manchete.toUpperCase()}*\n\n`;
-  }
-
-  // ── Placar do grupo ──
+  // ── Seção 1: Dados reais do grupo ──
   txt +=
     `${SEP}\n` +
-    `📊 *PLACAR DA SEMANA*\n` +
+    `📊 *PLACAR DO GRUPO* _• dados reais_\n` +
     `${SEP}\n` +
     `📬 Hoje: *${s.hoje}* msgs  •  📦 Semana: *${s.semana}* msgs\n\n` +
     `🏆 _Mais ativos:_\n${topTexto}\n` +
     (audios ? `\n🎙️ _Rei dos áudios:_ *${audios.nome}* (${audios.n})\n` : "") +
-    `\n👻 _Sumidos da semana:_\n${sumidosTexto}\n\n`;
+    `\n👻 _Sumidos há +7 dias:_\n${sumidosTexto}\n\n`;
 
-  // ── Signo do dia ──
+  // ── Seção 2: Signo (dados fixos) ──
   txt +=
     `${SEP}\n` +
     `🔮 *SIGNO DO DIA*\n` +
     `${SEP}\n${horoscopoTexto}\n\n`;
 
-  // ── Colunas da IA ──
+  // ── Seção 3: Colunas geradas pela IA (marcadas claramente) ──
   if (c) {
-    if (c.noticia) txt += `${SEP}\n💡 *RADAR TECH*\n${SEP}\n${c.noticia}\n\n`;
-    if (c.dica)    txt += `${SEP}\n📚 *APRENDA HOJE*\n${SEP}\n${c.dica}\n\n`;
-    if (c.fato)    txt += `${SEP}\n🤓 *VOCÊ SABIA?*\n${SEP}\n${c.fato}\n\n`;
-    if (c.piada)   txt += `${SEP}\n😂 *PIADA DO DIA*\n${SEP}\n${c.piada}\n\n`;
+    txt += `${SEP}\n_✨ As seções abaixo são geradas por IA_\n${SEP}\n\n`;
+    if (c.manchete) txt += `📰 *MANCHETE DO DIA*\n🔴 *${c.manchete.toUpperCase()}*\n\n`;
+    if (c.noticia)  txt += `💡 *RADAR TECH*\n${c.noticia}\n\n`;
+    if (c.dica)     txt += `📚 *APRENDA HOJE*\n${c.dica}\n\n`;
+    if (c.fato)     txt += `🤓 *VOCÊ SABIA?*\n${c.fato}\n\n`;
+    if (c.piada)    txt += `😂 *PIADA DO DIA*\n${c.piada}\n\n`;
   }
 
   // ── Rodapé ──
@@ -173,10 +168,11 @@ export function textoStats(chatId) {
 
 export function textoSumidos(chatId) {
   const s = getStatsGrupo(chatId);
-  if (!s.sumidos.length) return "✅ Ninguém sumido há mais de 3 dias!";
+  if (!s.sumidos.length) return "✅ Ninguém sumido há mais de 7 dias!";
   const linhas = s.sumidos.map(u => {
-    const dias = Math.floor((Date.now() - u.ultima_msg) / 86400000);
+    if (!u.ultimo_ts) return `👤 *${u.nome}* — nunca falou no grupo`;
+    const dias = Math.floor((Math.floor(Date.now() / 1000) - u.ultimo_ts) / 86400);
     return `👻 *${u.nome}* — sumido há ${dias} dia${dias !== 1 ? "s" : ""}`;
   });
-  return "🕵️ *Detector de Sumidos*\n\n" + linhas.join("\n");
+  return `🕵️ *Detector de Sumidos*\n_Pessoas que estão no grupo mas não falam há mais de 7 dias:_\n\n` + linhas.join("\n");
 }

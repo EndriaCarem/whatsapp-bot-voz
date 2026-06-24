@@ -1,4 +1,4 @@
-import { getRanking, getUsuario, getDiasNoGrupo, isAdmin, xpTotal } from "./db.js";
+import { getRanking, getUsuario, getDiasNoGrupo, isAdmin, xpTotal, getPontosHoje } from "./db.js";
 
 // ── Cargos automáticos com tema de TI ────────────────────────────────────────
 // Progressão baseada em dias no grupo + nível de XP.
@@ -108,6 +108,18 @@ export function textoPerfil(chatId, jid) {
   const custom = u.cargo_custom ? `\n├ Cargo: *[${u.cargo_custom}]*`  : "";
 
   const total = xpTotal(u.nivel, u.xp);
+
+  const tipoEmoji = { entrada: "🟢", intervalo: "🟡", retorno: "🔵", saida: "🔴" };
+  const tipoLabel = { entrada: "Entrada", intervalo: "Intervalo", retorno: "Retorno", saida: "Saída" };
+  const pontos = getPontosHoje(chatId, jid);
+  const pontoTxt = pontos.length
+    ? "\n├ 🕐 *Ponto hoje:*\n" +
+      pontos.map(p => {
+        const h = new Date(p.ts * 1000).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+        return `│  ${tipoEmoji[p.tipo] || "⚪"} ${tipoLabel[p.tipo] || p.tipo} — ${h}`;
+      }).join("\n")
+    : "";
+
   return (
     `${cargo.emoji} *${u.nome}*\n` +
     `├ Cargo: *${cargo.titulo}* (${dias} dias no grupo)` +
@@ -115,7 +127,8 @@ export function textoPerfil(chatId, jid) {
     `├ Nível: *${u.nivel}* | XP total: *${total}*\n` +
     `├ 🏁 XP da temporada: *${u.xp_mes}*\n` +
     `├ Moedas: 💰 *${u.moedas}*\n` +
-    `└ Msgs: *${u.msgs}* | Áudios: *${u.audios}*`
+    `├ Msgs: *${u.msgs}* | Áudios: *${u.audios}*` +
+    pontoTxt
   );
 }
 
