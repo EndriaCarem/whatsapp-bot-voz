@@ -86,6 +86,15 @@ Os dados são isolados por grupo — o bot funciona em vários grupos simultanea
 
 ---
 
+## 🚀 Quick Start (3 linhas)
+
+```bash
+cd web3d && npm install && npm start
+# Abra: http://localhost:3001/advanced.html
+```
+
+---
+
 ## ⚙️ Como rodar
 
 ### Pré-requisitos
@@ -150,12 +159,23 @@ whatsapp-bot-voz/
 ├── enquetes.js           # Enquetes e votações
 ├── stats.js              # Jornal e estatísticas do grupo
 ├── db.js                 # Camada de dados (SQLite)
+├── QUICKSTART.md         # Guia rápido para testes
 ├── front/                # Painel web (React + Vite) — QR Code
-└── web3d/                # Interface 3D Futurista
-    ├── index.html        # UI interativa com avatares animados
+└── web3d/                # 🎮 Interface 3D AVANÇADA
+    ├── advanced.html     # ⭐ Interface 3D com Three.js (PRINCIPAL)
+    ├── index.html        # Interface simples com chat
     ├── server.js         # WebSocket server (Node.js)
-    └── package.json      # Dependências do servidor 3D
+    ├── package.json      # Dependências
+    ├── README.md         # Documentação da interface 3D
+    └── preview.svg       # Preview visual
 ```
+
+### 📌 Para desenvolver/testar:
+- Vá para `web3d/` (contém tudo pronto para rodar)
+- Execute `npm install && npm start`
+- Abra **http://localhost:3001/advanced.html**
+
+Ver [QUICKSTART.md](QUICKSTART.md) para mais detalhes.
 
 ---
 
