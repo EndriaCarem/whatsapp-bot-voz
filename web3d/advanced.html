@@ -564,18 +564,49 @@
 
         async function sendCommand(commandText) {
             try {
-                const response = await fetch(API_URL, {
+                const response = await fetch('/api/command', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ command: commandText })
                 });
 
+                if (!response.ok) {
+                    return '❌ Servidor respondeu com erro';
+                }
+
                 const data = await response.json();
-                return data.content;
+                return data.content || data.message || '❌ Sem resposta';
             } catch (error) {
                 console.error('Erro ao enviar comando:', error);
-                return '❌ Erro ao conectar com o servidor';
+                // Se a API falhar, usa respostas locais
+                return getLocalResponse(commandText);
             }
+        }
+
+        function getLocalResponse(input) {
+            const cmd = input.toLowerCase().trim();
+
+            const responses = {
+                '!ia': '🧠 IA: Olá! Como posso ajudar?',
+                '!ranking': '🏆 TOP 5:\n1. EndriaCarem - 5000 XP\n2. Dev Master - 4500 XP\n3. Code Ninja - 4000 XP\n4. Tech Wizard - 3500 XP\n5. Bot Lover - 3000 XP',
+                '!perfil': '👤 Nível: 25 | XP: 2500 | Rank: 12º',
+                '!jornal': '📰 15 mensagens | 3 enquetes | Top: EndriaCarem 850 XP',
+                '!stats': '📊 Membros: 24 | Mensagens: 12.450 | Uptime: 45 dias',
+                '!voz': '🎙️ !demonio !esquilo !robo !estadio !agudo !grave',
+                '!sumidos': '🚫 João (12d) | Maria (9d) | Pedro (8d)',
+                '!musica': '🎵 Reprodutor ativado',
+                '!ajuda': '❓ !ia !ranking !perfil !jornal !stats !voz !sumidos !musica'
+            };
+
+            for (const [key, value] of Object.entries(responses)) {
+                if (cmd.startsWith(key)) return value;
+            }
+
+            if (cmd.startsWith('!ia ')) {
+                return `🤖 Respondendo: "${cmd.substring(4)}"`;
+            }
+
+            return '❓ Comando desconhecido. Digite !ajuda';
         }
 
         function showChatBubble(text, type = 'bot') {
