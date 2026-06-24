@@ -321,6 +321,43 @@
     <div class="chat-bubble" id="chatBubble" style="display: none;"></div>
     <div class="scene-info" id="sceneInfo"></div>
 
+    <!-- PAINEL DE DEBUG VISÍVEL -->
+    <div id="debugPanel" style="position:fixed;top:0;left:0;right:0;z-index:99999;background:#000;color:#0f0;font:12px/1.4 monospace;padding:10px;max-height:50vh;overflow:auto;border-bottom:2px solid #0f0;white-space:pre-wrap;">[DEBUG] iniciando…</div>
+    <script>
+        // Logger visível na tela (roda ANTES de qualquer módulo)
+        window.__dbg = function (msg, ok) {
+            try {
+                var p = document.getElementById('debugPanel');
+                var line = (ok === false ? '❌ ' : ok === true ? '✅ ' : '• ') + msg;
+                if (p) p.textContent += '\n' + line;
+                console.log('[Axolotl]', msg);
+            } catch (e) {}
+        };
+        window.addEventListener('error', function (e) {
+            window.__dbg('ERRO JS: ' + (e.message || e.type) + ' @ ' + (e.filename || '') + ':' + (e.lineno || ''), false);
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+            window.__dbg('PROMISE REJEITADA: ' + (e.reason && e.reason.message ? e.reason.message : e.reason), false);
+        });
+        __dbg('HTML carregado, document.readyState=' + document.readyState);
+        // checa WebGL
+        try {
+            var c = document.createElement('canvas');
+            var gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+            __dbg('WebGL disponível: ' + !!gl, !!gl);
+        } catch (err) { __dbg('WebGL erro: ' + err.message, false); }
+        // checa suporte a importmap
+        var hasImportMap = HTMLScriptElement.supports && HTMLScriptElement.supports('importmap');
+        __dbg('Suporte a importmap: ' + hasImportMap, hasImportMap);
+        // fallback: se o módulo não rodar em 6s, avisa
+        window.__moduleStarted = false;
+        setTimeout(function () {
+            if (!window.__moduleStarted) {
+                __dbg('O <script type=module> NÃO executou em 6s (provável falha de import/CDN bloqueado)', false);
+            }
+        }, 6000);
+    </script>
+
     <!-- Three.js (import map com versão válida) -->
     <script type="importmap">
     {
@@ -332,8 +369,19 @@
     </script>
 
     <script type="module">
-        import * as THREE from 'three';
-        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        window.__moduleStarted = true;
+        window.__dbg && __dbg('<script module> começou a executar', true);
+
+        let THREE, OrbitControls;
+        try {
+            THREE = await import('three');
+            window.__dbg && __dbg('Three.js importado, versão: ' + (THREE.REVISION || '?'), true);
+            ({ OrbitControls } = await import('three/addons/controls/OrbitControls.js'));
+            window.__dbg && __dbg('OrbitControls importado', true);
+        } catch (err) {
+            window.__dbg && __dbg('FALHA ao importar Three.js: ' + err.message, false);
+            throw err;
+        }
 
         // ========== CONFIG ==========
         // Detecta ambiente (produção vs local)
@@ -343,16 +391,25 @@
             : '/api/command';
 
         const canvas = document.getElementById('canvas');
+        __dbg('canvas encontrado: ' + !!canvas, !!canvas);
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.shadowMap.enabled = true;
-        renderer.setClearColor(0x0a0a1e);
+        let renderer;
+        try {
+            renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.setClearColor(0x0a0a1e);
+            __dbg('WebGLRenderer criado', true);
+        } catch (err) {
+            __dbg('FALHA ao criar renderer: ' + err.message, false);
+            throw err;
+        }
 
         const controls = new OrbitControls(camera, canvas);
         controls.autoRotate = true;
         controls.autoRotateSpeed = 2;
+        __dbg('OrbitControls instanciado', true);
 
         // ========== CENAS ==========
         const scenes = {
@@ -713,9 +770,21 @@
         }
 
         // ========== INIT ==========
-        loadScene('sala');
-        document.getElementById('statusText').textContent = 'Online';
-        animate();
+        try {
+            loadScene('sala');
+            __dbg('cena "sala" carregada', true);
+            document.getElementById('statusText').textContent = 'Online';
+            animate();
+            __dbg('loop de animação iniciado — TUDO OK 🎉', true);
+            // Esconde o painel de debug após 4s se tudo deu certo
+            setTimeout(function () {
+                var p = document.getElementById('debugPanel');
+                if (p) p.style.display = 'none';
+            }, 4000);
+        } catch (err) {
+            __dbg('FALHA na init: ' + err.message, false);
+            throw err;
+        }
     </script>
 
     <!-- Captura de erro: se o módulo 3D falhar, mostra na tela em vez de ficar em branco -->
