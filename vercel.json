@@ -1,25 +1,7 @@
 {
-  "buildCommand": "cd web3d && npm install",
-  "outputDirectory": "web3d",
-  "rewrites": [
-    {
-      "source": "/simples",
-      "destination": "/index.html"
-    },
-    {
-      "source": "/",
-      "destination": "/advanced.html"
-    }
-  ],
-  "headers": [
-    {
-      "source": "/(.*)",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "public, max-age=3600"
-        }
-      ]
-    }
-  ]
+  "version": 2,
+  "framework": null,
+  "buildCommand": null,
+  "installCommand": null,
+  "outputDirectory": "public"
 }

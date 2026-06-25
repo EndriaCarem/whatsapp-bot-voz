@@ -1,11 +1,4 @@
-.git
-.gitignore
-README.md
-node_modules
-auth
-teste-saidas
-jogos
-.env.local
-.env.*.local
-*.log
-.DS_Store
+*
+!public
+!public/**
+!vercel.json
